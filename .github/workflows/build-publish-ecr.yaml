@@ -43,7 +43,7 @@ jobs:
     env:
       DOCKER_REGISTRY: ${{secrets.POCS_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
       AWS_OIDC_ROLE: ${{secrets.POCS_AWS_GITHUB_OIDC_ROLE_ARN}}
-      BRANCH_NAME: main
+      BRANCH_NAME: gliner_integration
     runs-on: ubuntu-22.04
     permissions:
       id-token: write
