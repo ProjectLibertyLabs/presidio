@@ -14,8 +14,8 @@ permissions:
   packages: read
 env:
   AWS_REGION: us-east-2
-  DOCKER_PLATFORM: linux/amd64,linux/arm64
-  # DOCKER_PLATFORM: linux/amd64
+  # DOCKER_PLATFORMS: linux/amd64,linux/arm64
+  DOCKER_PLATFORMS: linux/amd64
 
 jobs:
   changes:
@@ -61,10 +61,10 @@ jobs:
         run: |
           short_sha=${GITHUB_SHA::7}
           echo "short_sha=$short_sha" >> $GITHUB_OUTPUT
-      - name: Set up E
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: "linux/amd64,linux/arm64"
+      # - name: Set up QEMU
+      #   uses: docker/setup-qemu-action@v3
+      #   with:
+      #     platforms: ${{env.DOCKER_PLATFORMS}}
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Configure AWS Credentials
@@ -90,7 +90,7 @@ jobs:
         with:
           context: presidio-analyzer
           file: ${{matrix.service}}/Dockerfile.gliner-edge
-          platforms: ${{env.DOCKER_PLATFORM}}
+          platforms: ${{env.DOCKER_PLATFORMS}}
           push: true
           tags: |
             ${{env.DOCKER_REGISTRY}}/${{env.ECR_NAMESPACE}}:latest
