@@ -140,3 +140,20 @@ def test_get_analysis_explanation():
     test_region = "US"
     explanation = phone_recognizer._get_analysis_explanation(test_region)
     assert explanation.recognizer == "PhoneRecognizer"
+
+
+@pytest.mark.parametrize(
+    "text, expected_len",
+    [
+        ("Policy Number: 123456-7890", 0),
+        ("The server ip is 192.168.1.100", 0),
+        ("Please call +1 415 555 0132 for support.", 1),
+    ],
+)
+def test_when_phone_candidate_in_negative_context_then_filtered(
+    spacy_nlp_engine, text, expected_len
+):
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert len(results) == expected_len

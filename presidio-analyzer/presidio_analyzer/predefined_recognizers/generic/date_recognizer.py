@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from presidio_analyzer import Pattern, PatternRecognizer
 
@@ -82,6 +82,20 @@ class DateRecognizer(PatternRecognizer):
     ]
 
     CONTEXT = ["date", "birthday"]
+    BIRTH_CONTEXT_TERMS = ("dob", "date of birth", "born", "birth", "birthday")
+    NON_BIRTH_CONTEXT_TERMS = (
+        "date of death",
+        "death",
+        "report",
+        "deadline",
+        "departure",
+        "arrival",
+        "issued",
+        "event",
+        "workshop",
+        "timestamp",
+        "finalized",
+    )
 
     def __init__(
         self,
@@ -89,10 +103,32 @@ class DateRecognizer(PatternRecognizer):
         context: Optional[List[str]] = None,
         supported_language: str = "en",
         supported_entity: str = "DATE_TIME",
+        require_birth_context: bool = True,
+        birth_context_terms: Optional[Sequence[str]] = None,
+        non_birth_context_terms: Optional[Sequence[str]] = None,
+        context_window_chars: int = 45,
         name: Optional[str] = None,
     ):
         patterns = patterns if patterns else self.PATTERNS
         context = context if context else self.CONTEXT
+        self.require_birth_context = require_birth_context
+        self.context_window_chars = context_window_chars
+        self.birth_context_terms = tuple(
+            term.lower()
+            for term in (
+                birth_context_terms
+                if birth_context_terms is not None
+                else self.BIRTH_CONTEXT_TERMS
+            )
+        )
+        self.non_birth_context_terms = tuple(
+            term.lower()
+            for term in (
+                non_birth_context_terms
+                if non_birth_context_terms is not None
+                else self.NON_BIRTH_CONTEXT_TERMS
+            )
+        )
         super().__init__(
             supported_entity=supported_entity,
             patterns=patterns,
@@ -100,3 +136,42 @@ class DateRecognizer(PatternRecognizer):
             supported_language=supported_language,
             name=name,
         )
+
+    def analyze(
+        self,
+        text: str,
+        entities: List[str],
+        nlp_artifacts=None,
+        regex_flags: Optional[int] = None,
+    ):
+        results = super().analyze(
+            text=text,
+            entities=entities,
+            nlp_artifacts=nlp_artifacts,
+            regex_flags=regex_flags,
+        )
+        if not self.require_birth_context:
+            return results
+
+        filtered_results = []
+        for result in results:
+            start = result.start
+            end = result.end
+            window_start = max(0, start - self.context_window_chars)
+            window_end = min(len(text), end + self.context_window_chars)
+            context_window = text[window_start:window_end].lower()
+            has_birth_context = any(
+                term in context_window for term in self.birth_context_terms
+            )
+            has_non_birth_context = any(
+                term in context_window for term in self.non_birth_context_terms
+            )
+
+            if not has_birth_context:
+                continue
+            if has_non_birth_context:
+                continue
+
+            filtered_results.append(result)
+
+        return filtered_results

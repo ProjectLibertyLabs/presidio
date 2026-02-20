@@ -241,6 +241,75 @@ class GLiNERPartialCardRecognizerConfig(PredefinedRecognizerConfig):
     )
 
 
+class PhoneRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for PhoneRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    leniency: Optional[int] = Field(None, description="Phone matcher leniency (0-3)")
+    require_possible_number: Optional[bool] = Field(
+        None, description="Require phonenumbers possible-number validation"
+    )
+    require_valid_number: Optional[bool] = Field(
+        None, description="Require phonenumbers valid-number validation"
+    )
+    positive_context_terms: Optional[List[str]] = Field(
+        None, description="Positive context terms for phone detection"
+    )
+    negative_context_terms: Optional[List[str]] = Field(
+        None, description="Negative context terms for phone suppression"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Phone context window size"
+    )
+    reject_numeric_id_without_context: Optional[bool] = Field(
+        None, description="Reject ID-like numeric groups without positive phone context"
+    )
+
+
+class DateRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for DateRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    require_birth_context: Optional[bool] = Field(
+        None, description="Require DOB-like context around date matches"
+    )
+    birth_context_terms: Optional[List[str]] = Field(
+        None, description="DOB positive context terms"
+    )
+    non_birth_context_terms: Optional[List[str]] = Field(
+        None, description="Non-DOB context terms to suppress date matches"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Date context window size"
+    )
+
+
+class CreditCardRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for CreditCardRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    min_card_digits: Optional[int] = Field(None, description="Minimum PAN length")
+    max_card_digits: Optional[int] = Field(None, description="Maximum PAN length")
+    reject_partials: Optional[bool] = Field(
+        None, description="Reject partial/short card-number matches"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Credit-card context window size"
+    )
+    positive_context_terms: Optional[List[str]] = Field(
+        None, description="Positive context terms for credit-card detection"
+    )
+    negative_context_terms: Optional[List[str]] = Field(
+        None, description="Negative context terms for suppression"
+    )
+    apply_context_filter: Optional[bool] = Field(
+        None, description="Apply context-based suppression for card detection"
+    )
+
+
 class CustomRecognizerConfig(BaseRecognizerConfig):
     """Configuration for custom pattern-based recognizers."""
 
@@ -534,4 +603,7 @@ CONFIG_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "EdgeONNXGLiNERRecognizer": EdgeONNXGLiNERRecognizerConfig,
     "ContextAwareUsSsnRecognizer": ContextAwareUsSsnRecognizerConfig,
     "GLiNERPartialCardRecognizer": GLiNERPartialCardRecognizerConfig,
+    "PhoneRecognizer": PhoneRecognizerConfig,
+    "DateRecognizer": DateRecognizerConfig,
+    "CreditCardRecognizer": CreditCardRecognizerConfig,
 }

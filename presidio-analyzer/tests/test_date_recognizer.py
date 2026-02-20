@@ -6,7 +6,7 @@ from presidio_analyzer.predefined_recognizers import DateRecognizer
 
 @pytest.fixture(scope="module")
 def recognizer():
-    return DateRecognizer()
+    return DateRecognizer(require_birth_context=False)
 
 
 @pytest.fixture(scope="module")
@@ -78,3 +78,20 @@ def test_when_all_dates_then_succeed(
         assert_result_within_score_range(
             res, entities[0], st_pos, fn_pos, st_score, fn_score
         )
+
+
+@pytest.mark.parametrize(
+    "text, expected_len",
+    [
+        ("Today is 2024-07-15 and the workshop starts soon.", 0),
+        ("John was born on 1988-08-23 in the USA.", 1),
+        ("DOB: 01/15/1990", 1),
+        ("Date of death: 2023-07-15", 0),
+    ],
+)
+def test_when_birth_context_required_then_detects_only_dob_like_dates(
+    text, expected_len, entities
+):
+    recognizer = DateRecognizer(require_birth_context=True)
+    results = recognizer.analyze(text, entities)
+    assert len(results) == expected_len
