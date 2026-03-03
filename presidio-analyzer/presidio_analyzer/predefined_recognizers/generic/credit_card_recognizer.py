@@ -126,6 +126,7 @@ class CreditCardRecognizer(PatternRecognizer):
     def analyze(
         self, text: str, entities: List[str], nlp_artifacts=None, regex_flags=None
     ):
+        """Detect cards and remove hits lacking positive context signals."""
         results = super().analyze(
             text=text,
             entities=entities,
