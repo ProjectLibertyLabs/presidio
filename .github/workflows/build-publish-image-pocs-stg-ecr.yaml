@@ -1,4 +1,4 @@
-name: Build and Publish to ECR
+name: Build and Publish Image to POCs Staging ECR
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
@@ -32,13 +32,13 @@ jobs:
         with:
           filters: |
             docker-images:
-              - '.github/workflows/build-publish-ecr.yaml'
+              - '.github/workflows/build-publish-image-pocs-stg-ecr.yaml'
               - 'presidio-analyzer/**'
               - '*'
 
   build-publish-docker-images:
     needs: changes
-    name: Build and Publish to ECR
+    name: Build and Publish to POCs Staging ECR
     if: needs.changes.outputs.docker-images == 'true'
     env:
       DOCKER_REGISTRY: ${{secrets.POCS_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
