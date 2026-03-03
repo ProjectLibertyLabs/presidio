@@ -6,11 +6,13 @@ from typing import Dict, List, Tuple
 
 
 def result_dedupe_key(text: str, result) -> Tuple[str, int, int, str]:
+    """Build a stable dedupe key from entity type, span, and normalized text."""
     normalized = " ".join(text[result.start : result.end].split()).lower()
     return result.entity_type, result.start, result.end, normalized
 
 
 def is_gliner_result(result, free_text_name: str, dob_name: str) -> bool:
+    """Return whether a result came from one of the GLiNER recognizers."""
     explanation = result.analysis_explanation
     if not explanation or not explanation.recognizer:
         return False
@@ -26,6 +28,7 @@ def filter_results_by_source(
     regex_owned_entities,
     gliner_recognizer_names,
 ) -> List:
+    """Apply source ownership routing and deduplicate by normalized span text."""
     if not use_source_routing:
         return results
 

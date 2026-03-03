@@ -131,8 +131,9 @@ class PhoneRecognizer(LocalRecognizer):
                         continue
 
                     parsed_number = match.number
-                    if self.require_possible_number and not phonenumbers.is_possible_number(
-                        parsed_number
+                    if (
+                        self.require_possible_number
+                        and not phonenumbers.is_possible_number(parsed_number)
                     ):
                         continue
                     if self.require_valid_number and not phonenumbers.is_valid_number(

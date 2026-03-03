@@ -144,6 +144,7 @@ class DateRecognizer(PatternRecognizer):
         nlp_artifacts=None,
         regex_flags: Optional[int] = None,
     ):
+        """Detect dates and keep only matches with birth-related context."""
         results = super().analyze(
             text=text,
             entities=entities,

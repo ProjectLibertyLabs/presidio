@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import List, Optional, Set
 
 
-def filter_by_target_entities(results: List, target_entities: Optional[List[str]]) -> List:
+def filter_by_target_entities(
+    results: List, target_entities: Optional[List[str]]
+) -> List:
+    """Keep only results whose entity types are in ``target_entities``."""
     if not target_entities:
         return results
 

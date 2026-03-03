@@ -12,11 +12,12 @@ from typing import Dict, List, Optional, Tuple
 from presidio_analyzer.analysis_explanation import AnalysisExplanation
 from presidio_analyzer.local_recognizer import LocalRecognizer
 from presidio_analyzer.nlp_engine import NlpArtifacts
-from presidio_analyzer.predefined_recognizers.country_specific.us.us_ssn_recognizer import (
+from presidio_analyzer.recognizer_result import RecognizerResult
+
+from ...predefined_recognizers.country_specific.us.us_ssn_recognizer import (
     UsSsnRecognizer,
 )
-from presidio_analyzer.predefined_recognizers.ner.gliner_recognizer import GLiNERRecognizer
-from presidio_analyzer.recognizer_result import RecognizerResult
+from ...predefined_recognizers.ner.gliner_recognizer import GLiNERRecognizer
 
 try:
     from gliner import GLiNER
@@ -67,6 +68,7 @@ class EdgeONNXGLiNERRecognizer(GLiNERRecognizer):
         return (model_name, onnx_model_file, str(map_location or "auto"))
 
     def load(self) -> None:
+        """Load and cache a GLiNER ONNX model for this recognizer configuration."""
         if not GLiNER:
             raise ImportError("GLiNER is not installed. Please install it.")
 
@@ -148,7 +150,9 @@ class EdgeONNXGLiNERRecognizer(GLiNERRecognizer):
                     analysis_explanation=AnalysisExplanation(
                         recognizer=self.name,
                         original_score=pred["score"],
-                        textual_explanation=f"Identified as {presidio_entity} by GLiNER",
+                        textual_explanation=(
+                            f"Identified as {presidio_entity} by GLiNER"
+                        ),
                     ),
                 )
             )
@@ -172,7 +176,10 @@ class ContextAwareUsSsnRecognizer(UsSsnRecognizer):
         super().__init__(*args, **kwargs)
         self.min_score = min_score
         self.low_score_require_context = low_score_require_context
-        self.context_terms = [term.lower() for term in (context_terms or ["ssn", "social security"])]
+        default_terms = ["ssn", "social security"]
+        self.context_terms = [
+            term.lower() for term in (context_terms or default_terms)
+        ]
         self.context_window_chars = context_window_chars
         self.target_entities = target_entities or []
 
@@ -182,6 +189,7 @@ class ContextAwareUsSsnRecognizer(UsSsnRecognizer):
         entities: List[str],
         nlp_artifacts: Optional[NlpArtifacts] = None,
     ) -> List[RecognizerResult]:
+        """Run SSN detection and gate low-score results by local context terms."""
         results = super().analyze(text, entities, nlp_artifacts)
         if not results:
             return []
@@ -312,6 +320,7 @@ class GLiNERPartialCardRecognizer(LocalRecognizer):
         return None
 
     def load(self) -> None:
+        """Load or reuse the shared GLiNER model used by the fallback recognizer."""
         if not self.enabled:
             return
 
@@ -345,6 +354,7 @@ class GLiNERPartialCardRecognizer(LocalRecognizer):
         entities: List[str],
         nlp_artifacts: Optional[NlpArtifacts] = None,
     ) -> List[RecognizerResult]:
+        """Detect partial card mentions using GLiNER and strict context filters."""
         if not self.enabled:
             return []
         if entities and "CREDIT_CARD" not in entities:
@@ -359,12 +369,16 @@ class GLiNERPartialCardRecognizer(LocalRecognizer):
                 text_lower,
             )
         )
-        has_required_context = any(term in text_lower for term in self.required_context_terms)
+        has_required_context = any(
+            term in text_lower for term in self.required_context_terms
+        )
         if not has_required_context and not has_last4_phrase:
             return []
 
         has_blocked_context = any(term in text_lower for term in self.blocklist_terms)
-        has_strong_context = any(term in text_lower for term in self.strong_context_terms)
+        has_strong_context = any(
+            term in text_lower for term in self.strong_context_terms
+        )
         if has_blocked_context and not has_strong_context:
             return []
 
@@ -404,7 +418,9 @@ class GLiNERPartialCardRecognizer(LocalRecognizer):
                 analysis_explanation=AnalysisExplanation(
                     recognizer=self.name,
                     original_score=best["score"],
-                    textual_explanation="Identified as partial card number by GLiNER fallback",
+                    textual_explanation=(
+                        "Identified as partial card number by GLiNER fallback"
+                    ),
                 ),
             )
         ]
