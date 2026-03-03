@@ -5,6 +5,8 @@ from enum import IntEnum
 
 
 class Severity(IntEnum):
+    """Threat severity levels as integer scores."""
+
     CLEAN = 0
     INFO = 20
     WARNING = 40
@@ -14,6 +16,8 @@ class Severity(IntEnum):
 
 @dataclass(frozen=True)
 class PatternCategory:
+    """A named group of regex patterns sharing a severity level."""
+
     name: str
     severity: Severity
     patterns: tuple[str, ...]

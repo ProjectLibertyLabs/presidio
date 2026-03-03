@@ -8,7 +8,6 @@ from . import __version__
 from .detector import format_human, format_json, validate_input, validate_url
 from .sanitizer import sanitize
 
-
 USAGE = """\
 ClawDefender - Comprehensive AI Agent Protection
 
@@ -24,6 +23,7 @@ Usage:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the ClawDefender CLI."""
     args = argv if argv is not None else sys.argv[1:]
 
     if not args:

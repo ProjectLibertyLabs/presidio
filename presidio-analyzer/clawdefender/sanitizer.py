@@ -9,12 +9,15 @@ from .detector import validate_input
 
 @dataclass
 class SanitizeResult:
+    """Result of sanitizing a text input for threats."""
+
     output: str
     flagged: bool
     severity: str
     patterns: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """Return a plain dict representation of this result."""
         return {
             "output": self.output,
             "flagged": self.flagged,

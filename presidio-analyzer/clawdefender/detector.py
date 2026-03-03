@@ -17,6 +17,8 @@ from .patterns import (
 
 @dataclass
 class Finding:
+    """A single pattern match finding."""
+
     module: str
     pattern: str
     match: str
@@ -24,6 +26,7 @@ class Finding:
     score: int
 
     def to_dict(self) -> dict:
+        """Return the finding as a dictionary."""
         return {
             "module": self.module,
             "pattern": self.pattern,
@@ -35,6 +38,8 @@ class Finding:
 
 @dataclass
 class ScanResult:
+    """Aggregated result of scanning text against all categories."""
+
     clean: bool
     severity: str
     score: int
@@ -42,6 +47,7 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
 
     def to_dict(self) -> dict:
+        """Return the scan result as a dictionary."""
         return {
             "clean": self.clean,
             "severity": self.severity,

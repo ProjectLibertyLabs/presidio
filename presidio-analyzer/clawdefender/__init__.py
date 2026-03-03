@@ -2,8 +2,14 @@
 
 __version__ = "1.0.0"
 
-from .detector import validate_input, validate_url, is_allowed_domain, ScanResult, Finding
-from .sanitizer import sanitize, SanitizeResult
+from .detector import (
+    Finding,
+    ScanResult,
+    is_allowed_domain,
+    validate_input,
+    validate_url,
+)
+from .sanitizer import SanitizeResult, sanitize
 
 __all__ = [
     "validate_input",
