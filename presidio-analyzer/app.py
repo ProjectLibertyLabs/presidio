@@ -7,6 +7,15 @@ from logging.config import fileConfig
 from pathlib import Path
 from typing import Tuple
 
+from clawdefender import (
+    sanitize as claw_sanitize,
+)
+from clawdefender import (
+    validate_input as claw_validate,
+)
+from clawdefender import (
+    validate_url as claw_validate_url,
+)
 from flask import Flask, Response, jsonify, request
 from presidio_analyzer import (
     AnalyzerEngine,
@@ -15,12 +24,6 @@ from presidio_analyzer import (
     BatchAnalyzerEngine,
 )
 from werkzeug.exceptions import HTTPException
-
-from clawdefender import (
-    validate_input as claw_validate,
-    validate_url as claw_validate_url,
-    sanitize as claw_sanitize,
-)
 
 DEFAULT_PORT = "3000"
 DEFAULT_BATCH_SIZE = "500"
