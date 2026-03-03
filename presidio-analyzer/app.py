@@ -16,6 +16,12 @@ from presidio_analyzer import (
 )
 from werkzeug.exceptions import HTTPException
 
+from clawdefender import (
+    validate_input as claw_validate,
+    validate_url as claw_validate_url,
+    sanitize as claw_sanitize,
+)
+
 DEFAULT_PORT = "3000"
 DEFAULT_BATCH_SIZE = "500"
 DEFAULT_N_PROCESS = "1"
@@ -36,6 +42,13 @@ WELCOME_MESSAGE = r"""
 
 class Server:
     """HTTP Server for calling Presidio Analyzer."""
+
+    MAX_INPUT_LENGTH = 100_000  # 100KB per text item
+    MAX_FILES_PER_SCAN = 50
+    MAX_TOTAL_PAYLOAD = 5 * 1024 * 1024  # 5MB
+    MAX_FILENAME_LENGTH = 255
+
+    VALID_CHECK_TYPES = {"validate", "url"}
 
     def __init__(self):
         fileConfig(Path(Path(__file__).parent, LOGGING_CONF_FILE))
@@ -158,9 +171,192 @@ class Server:
                 )
                 return jsonify(error=e.args[0]), 500
 
+        @self.app.route("/defender/detect", methods=["POST"])
+        def detect() -> Tuple[str, int]:
+            """Detect malicious content using ClawDefender."""
+            try:
+                req_data = request.get_json()
+                if not req_data or "text" not in req_data:
+                    return jsonify(error="No text provided"), 400
+
+                check_type = req_data.get("check_type", "validate")
+                if check_type not in self.VALID_CHECK_TYPES:
+                    return jsonify(
+                        error=f"Invalid check_type. Must be one of: "
+                              f"{', '.join(sorted(self.VALID_CHECK_TYPES))}"
+                    ), 400
+
+                text = req_data["text"]
+                batch_request = isinstance(text, list)
+                texts = text if batch_request else [text]
+
+                results = []
+                for item in texts:
+                    try:
+                        item = self._validate_input_text(item)
+                    except ValueError as ve:
+                        return jsonify(error=str(ve)), 400
+
+                    if check_type == "url":
+                        findings = claw_validate_url(item)
+                        if not findings:
+                            result = {"clean": True, "severity": "clean",
+                                      "score": 0, "action": "allow"}
+                        else:
+                            max_score = max(f.score for f in findings)
+                            result = {"clean": False, "severity": "critical",
+                                      "score": max_score, "action": "block"}
+                    else:
+                        scan = claw_validate(item)
+                        result = scan.to_dict()
+                        result.pop("findings", None)
+
+                    result["text"] = item
+                    results.append(result)
+
+                return jsonify(results if batch_request else results[0]), 200
+
+            except Exception as e:
+                self.logger.error(f"Error in /detect: {e}")
+                return jsonify(error=str(e)), 400
+
+        @self.app.route("/defender/sanitize", methods=["POST"])
+        def sanitize() -> Tuple[str, int]:
+            """Sanitize input text using ClawDefender."""
+            try:
+                req_data = request.get_json()
+                if not req_data or "text" not in req_data:
+                    return jsonify(error="No text provided"), 400
+
+                text = req_data["text"]
+                batch_request = isinstance(text, list)
+                texts = text if batch_request else [text]
+
+                results = []
+                for item in texts:
+                    try:
+                        item = self._validate_input_text(item)
+                    except ValueError as ve:
+                        return jsonify(error=str(ve)), 400
+                    san_result = claw_sanitize(item)
+                    result = {
+                        "text": item,
+                        "sanitized": san_result.output,
+                        "flagged": san_result.flagged,
+                    }
+                    results.append(result)
+
+                return jsonify(results if batch_request else results[0]), 200
+
+            except Exception as e:
+                self.logger.error(f"Error in /sanitize: {e}")
+                return jsonify(error=str(e)), 400
+
+        @self.app.route("/defender/scan", methods=["POST"])
+        def scan() -> Tuple[str, int]:
+            """Scan file contents for malicious content."""
+            try:
+                req_data = request.get_json()
+                error = self._validate_scan_request(req_data)
+                if error:
+                    return jsonify(error=error), 400
+
+                files = req_data["files"]
+                file_results = []
+                any_flagged = False
+
+                for file_entry in files:
+                    filename = file_entry["filename"]
+                    content = file_entry["content"]
+
+                    scan_result = claw_validate(content)
+                    result_dict = scan_result.to_dict()
+                    result_dict["filename"] = filename
+                    file_results.append(result_dict)
+
+                    if not scan_result.clean:
+                        any_flagged = True
+
+                clean_count = sum(1 for r in file_results if r["clean"])
+                response = {
+                    "clean": not any_flagged,
+                    "summary": {
+                        "total_files": len(files),
+                        "clean_files": clean_count,
+                        "flagged_files": len(files) - clean_count,
+                    },
+                    "results": file_results,
+                }
+                return jsonify(response), 200
+
+            except Exception as e:
+                self.logger.error(f"Error in /defender/scan: {e}")
+                return jsonify(error=str(e)), 400
+
         @self.app.errorhandler(HTTPException)
         def http_exception(e):
             return jsonify(error=e.description), e.code
+
+    def _validate_scan_request(self, req_data) -> str | None:
+        """Validate a /defender/scan request. Returns error string or None."""
+        if not req_data or "files" not in req_data:
+            return "Missing 'files' field"
+
+        files = req_data["files"]
+        if not isinstance(files, list) or len(files) == 0:
+            return "'files' must be a non-empty list"
+
+        if len(files) > self.MAX_FILES_PER_SCAN:
+            return (
+                f"Too many files. Maximum is {self.MAX_FILES_PER_SCAN}, "
+                f"got {len(files)}"
+            )
+
+        total_size = 0
+        for i, entry in enumerate(files):
+            if not isinstance(entry, dict):
+                return f"File entry at index {i} must be an object"
+            if "filename" not in entry or "content" not in entry:
+                return (
+                    f"File entry at index {i} must have "
+                    f"'filename' and 'content' fields"
+                )
+            filename = entry["filename"]
+            content = entry["content"]
+
+            if not isinstance(filename, str) or len(filename) == 0:
+                return f"Filename at index {i} must be a non-empty string"
+            if len(filename) > self.MAX_FILENAME_LENGTH:
+                return (
+                    f"Filename at index {i} exceeds maximum length of "
+                    f"{self.MAX_FILENAME_LENGTH} characters"
+                )
+            if not isinstance(content, str):
+                return f"Content at index {i} must be a string"
+            if len(content) > self.MAX_INPUT_LENGTH:
+                return (
+                    f"Content of file '{filename}' exceeds maximum length "
+                    f"of {self.MAX_INPUT_LENGTH} characters"
+                )
+            total_size += len(content.encode("utf-8"))
+
+        if total_size > self.MAX_TOTAL_PAYLOAD:
+            return (
+                f"Total payload size exceeds maximum of "
+                f"{self.MAX_TOTAL_PAYLOAD} bytes"
+            )
+
+        return None
+
+    def _validate_input_text(self, text: str) -> str:
+        """Validate and sanitize input text."""
+        if not isinstance(text, str):
+            raise ValueError("Each text item must be a string")
+        if len(text) > self.MAX_INPUT_LENGTH:
+            raise ValueError(
+                f"Text exceeds maximum length of {self.MAX_INPUT_LENGTH} characters"
+            )
+        return text
 
 
 def _exclude_attributes_from_dto(recognizer_result_list):
