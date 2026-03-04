@@ -78,6 +78,32 @@ class Server:
             """Return basic health probe result."""
             return "Presidio Analyzer service is up"
 
+        @self.app.route("/livez")
+        def livez() -> Tuple[str, int]:
+            """Liveness probe. Returns 200 if the process is running."""
+            return jsonify({"status": "ok"}), 200
+
+        @self.app.route("/readyz")
+        def readyz() -> Tuple[str, int]:
+            """Readiness probe. Returns 200 only if the analyzer can serve requests."""
+            try:
+                if not self.engine.nlp_engine.is_loaded():
+                    reason = "NLP engine not loaded"
+                    return jsonify({"status": "not ready", "reason": reason}), 503
+
+                if not self.engine.registry.recognizers:
+                    reason = "No recognizers loaded"
+                    return jsonify({"status": "not ready", "reason": reason}), 503
+
+                results = self.engine.analyze(text="John Smith", language="en")
+                if not isinstance(results, list):
+                    reason = "Unexpected analyze result"
+                    return jsonify({"status": "not ready", "reason": reason}), 503
+
+                return jsonify({"status": "ok"}), 200
+            except Exception as e:
+                return jsonify({"status": "not ready", "reason": str(e)}), 503
+
         @self.app.route("/analyze", methods=["POST"])
         def analyze() -> Tuple[str, int]:
             """Execute the analyzer function."""
