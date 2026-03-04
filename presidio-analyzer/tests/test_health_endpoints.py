@@ -71,6 +71,20 @@ class TestReadyz:
                 assert data["status"] == "not ready"
                 assert "NLP engine not loaded" in data["reason"]
 
+    def test_returns_503_when_shutting_down(self, mock_engine):
+        with patch("app.fileConfig"), \
+             patch("app.AnalyzerEngineProvider") as mock_provider, \
+             patch("app.BatchAnalyzerEngine"):
+            mock_provider.return_value.create_engine.return_value = mock_engine
+            from app import Server
+            server = Server()
+            server.app.config["TESTING"] = True
+            server.app.config["SHUTTING_DOWN"] = True
+            with server.app.test_client() as c:
+                resp = c.get("/readyz")
+                assert resp.status_code == 503
+                assert resp.get_json() == {"status": "shutting down"}
+
     def test_returns_503_when_no_recognizers(self, mock_engine):
         mock_engine.registry.recognizers = []
         with patch("app.fileConfig"), \

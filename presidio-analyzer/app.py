@@ -58,6 +58,7 @@ class Server:
         self.logger = logging.getLogger("presidio-analyzer")
         self.logger.setLevel(os.environ.get("LOG_LEVEL", self.logger.level))
         self.app = Flask(__name__)
+        self.app.config["SHUTTING_DOWN"] = False
 
         analyzer_conf_file = os.environ.get("ANALYZER_CONF_FILE")
         nlp_engine_conf_file = os.environ.get("NLP_CONF_FILE")
@@ -86,6 +87,9 @@ class Server:
         @self.app.route("/readyz")
         def readyz() -> Tuple[str, int]:
             """Readiness probe. Returns 200 only if the analyzer can serve requests."""
+            if self.app.config.get("SHUTTING_DOWN"):
+                return jsonify({"status": "shutting down"}), 503
+
             try:
                 if not self.engine.nlp_engine.is_loaded():
                     reason = "NLP engine not loaded"
