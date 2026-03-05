@@ -1,6 +1,6 @@
 name: Build and Publish Image to POCs Staging ECR
 concurrency:
-  group: ${{github.workflow}}-${{github.ref}}
+  group: build-pocs-stg-ecr-${{github.ref}}
   cancel-in-progress: true
 on:
   push:
