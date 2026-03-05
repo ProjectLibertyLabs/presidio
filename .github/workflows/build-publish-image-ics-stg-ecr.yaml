@@ -1,6 +1,6 @@
 name: Build and Publish Image to ICS Staging ECR
 concurrency:
-  group: ${{github.workflow}}-${{github.ref}}
+  group: build-ics-stg-ecr-${{github.ref}}
   cancel-in-progress: true
 on:
   push:
