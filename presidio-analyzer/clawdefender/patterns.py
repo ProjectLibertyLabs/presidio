@@ -187,12 +187,6 @@ PATH_TRAVERSAL = PatternCategory(
     name="path_traversal",
     severity=Severity.HIGH,
     patterns=(
-        r'.config/openclaw',
-        r'.openclaw',
-        r'the .openclaw',
-        r'.openclaw directory',
-        r'.openclaw folder',
-        r'openclaw.json',
         r'.config/gog',
         r'cat.*[.]env',
         r'read.*[.]env',
