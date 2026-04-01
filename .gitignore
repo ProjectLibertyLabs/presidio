@@ -90,7 +90,6 @@ ENV/
 env.bak/
 venv.bak/
 *venv/
-poetry.lock
 
 # Spyder project settings
 .spyderproject
@@ -141,3 +140,5 @@ mkdocs/
 # Visual Studio
 /.vs
 /TestResults
+
+.claude

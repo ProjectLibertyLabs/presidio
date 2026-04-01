@@ -176,6 +176,140 @@ class HuggingFaceRecognizerConfig(PredefinedRecognizerConfig):
     )
 
 
+class EdgeONNXGLiNERRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for EdgeONNXGLiNERRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model_name: Optional[str] = Field(None, description="GLiNER model name")
+    onnx_model_file: Optional[str] = Field(None, description="ONNX model artifact path")
+    entity_mapping: Optional[Dict[str, str]] = Field(
+        None, description="GLiNER label to Presidio entity mapping"
+    )
+    threshold: Optional[float] = Field(None, description="Confidence threshold")
+    flat_ner: Optional[bool] = Field(None, description="Use flat NER mode")
+    multi_label: Optional[bool] = Field(None, description="Use multi-label mode")
+    map_location: Optional[str] = Field(None, description="Device (cpu/cuda)")
+    target_entities: Optional[List[str]] = Field(
+        None, description="Entities allowed for this recognizer"
+    )
+
+
+class ContextAwareUsSsnRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for ContextAwareUsSsnRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    min_score: Optional[float] = Field(None, description="Minimum score before gating")
+    low_score_require_context: Optional[bool] = Field(
+        None, description="Require context for low-score matches"
+    )
+    context_terms: Optional[List[str]] = Field(None, description="SSN context terms")
+    context_window_chars: Optional[int] = Field(
+        None, description="Window size for SSN context lookup"
+    )
+    target_entities: Optional[List[str]] = Field(
+        None, description="Entities allowed for this recognizer"
+    )
+
+
+class GLiNERPartialCardRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for GLiNERPartialCardRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model_name: Optional[str] = Field(None, description="GLiNER model name")
+    onnx_model_file: Optional[str] = Field(None, description="ONNX model artifact path")
+    threshold: Optional[float] = Field(None, description="Confidence threshold")
+    flat_ner: Optional[bool] = Field(None, description="Use flat NER mode")
+    multi_label: Optional[bool] = Field(None, description="Use multi-label mode")
+    map_location: Optional[str] = Field(None, description="Device (cpu/cuda)")
+    labels: Optional[List[str]] = Field(
+        None, description="GLiNER ad-hoc labels for partial cards"
+    )
+    required_context_terms: Optional[List[str]] = Field(
+        None, description="Context required before fallback is allowed"
+    )
+    strong_context_terms: Optional[List[str]] = Field(
+        None, description="Context terms overriding blocklist"
+    )
+    blocklist_terms: Optional[List[str]] = Field(
+        None, description="Context terms that suppress fallback"
+    )
+    target_entities: Optional[List[str]] = Field(
+        None, description="Entities allowed for this recognizer"
+    )
+
+
+class PhoneRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for PhoneRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    leniency: Optional[int] = Field(None, description="Phone matcher leniency (0-3)")
+    require_possible_number: Optional[bool] = Field(
+        None, description="Require phonenumbers possible-number validation"
+    )
+    require_valid_number: Optional[bool] = Field(
+        None, description="Require phonenumbers valid-number validation"
+    )
+    positive_context_terms: Optional[List[str]] = Field(
+        None, description="Positive context terms for phone detection"
+    )
+    negative_context_terms: Optional[List[str]] = Field(
+        None, description="Negative context terms for phone suppression"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Phone context window size"
+    )
+    reject_numeric_id_without_context: Optional[bool] = Field(
+        None, description="Reject ID-like numeric groups without positive phone context"
+    )
+
+
+class DateRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for DateRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    require_birth_context: Optional[bool] = Field(
+        None, description="Require DOB-like context around date matches"
+    )
+    birth_context_terms: Optional[List[str]] = Field(
+        None, description="DOB positive context terms"
+    )
+    non_birth_context_terms: Optional[List[str]] = Field(
+        None, description="Non-DOB context terms to suppress date matches"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Date context window size"
+    )
+
+
+class CreditCardRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for CreditCardRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    min_card_digits: Optional[int] = Field(None, description="Minimum PAN length")
+    max_card_digits: Optional[int] = Field(None, description="Maximum PAN length")
+    reject_partials: Optional[bool] = Field(
+        None, description="Reject partial/short card-number matches"
+    )
+    context_window_chars: Optional[int] = Field(
+        None, description="Credit-card context window size"
+    )
+    positive_context_terms: Optional[List[str]] = Field(
+        None, description="Positive context terms for credit-card detection"
+    )
+    negative_context_terms: Optional[List[str]] = Field(
+        None, description="Negative context terms for suppression"
+    )
+    apply_context_filter: Optional[bool] = Field(
+        None, description="Apply context-based suppression for card detection"
+    )
+
+
 class CustomRecognizerConfig(BaseRecognizerConfig):
     """Configuration for custom pattern-based recognizers."""
 
@@ -280,6 +414,9 @@ class RecognizerRegistryConfig(BaseModel):
     recognizers: List[
         Union[
             HuggingFaceRecognizerConfig,
+            EdgeONNXGLiNERRecognizerConfig,
+            ContextAwareUsSsnRecognizerConfig,
+            GLiNERPartialCardRecognizerConfig,
             PredefinedRecognizerConfig,
             CustomRecognizerConfig,
             str,
@@ -463,4 +600,10 @@ class RecognizerRegistryConfig(BaseModel):
 # This allows for modular expansion without polluting the base config
 CONFIG_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "HuggingFaceNerRecognizer": HuggingFaceRecognizerConfig,
+    "EdgeONNXGLiNERRecognizer": EdgeONNXGLiNERRecognizerConfig,
+    "ContextAwareUsSsnRecognizer": ContextAwareUsSsnRecognizerConfig,
+    "GLiNERPartialCardRecognizer": GLiNERPartialCardRecognizerConfig,
+    "PhoneRecognizer": PhoneRecognizerConfig,
+    "DateRecognizer": DateRecognizerConfig,
+    "CreditCardRecognizer": CreditCardRecognizerConfig,
 }

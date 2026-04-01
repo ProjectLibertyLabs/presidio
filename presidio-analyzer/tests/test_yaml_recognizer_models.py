@@ -3,8 +3,13 @@
 import pytest
 from presidio_analyzer.input_validation.yaml_recognizer_models import (
     BaseRecognizerConfig,
+    CreditCardRecognizerConfig,
     CustomRecognizerConfig,
+    DateRecognizerConfig,
+    EdgeONNXGLiNERRecognizerConfig,
+    GLiNERPartialCardRecognizerConfig,
     LanguageContextConfig,
+    PhoneRecognizerConfig,
     PredefinedRecognizerConfig,
     RecognizerRegistryConfig,
 )
@@ -266,12 +271,44 @@ def test_custom_recognizer_config_invalid_score_range():
             "regex": r"\d+",
             "score": score
         }
-        with pytest.raises(ValidationError) as exc_info:
-            CustomRecognizerConfig(
-                name="test",
-                supported_entity="TEST",
-                patterns=[pattern]
-            )
+    with pytest.raises(ValidationError) as exc_info:
+        CustomRecognizerConfig(
+            name="test",
+            supported_entity="TEST",
+            patterns=[pattern]
+        )
+
+
+def test_edge_onnx_gliner_recognizer_config_parses_custom_fields():
+    config = EdgeONNXGLiNERRecognizerConfig(
+        name="GLiNERFreeTextRecognizer",
+        class_name="EdgeONNXGLiNERRecognizer",
+        supported_languages=["en"],
+        onnx_model_file="onnx/model.onnx",
+        model_name="knowledgator/gliner-pii-edge-v1.0",
+        entity_mapping={"name": "PERSON"},
+        threshold=0.45,
+    )
+
+    dumped = config.model_dump()
+    assert dumped["onnx_model_file"] == "onnx/model.onnx"
+    assert dumped["entity_mapping"] == {"name": "PERSON"}
+
+
+def test_gliner_partial_card_config_parses_context_lists():
+    config = GLiNERPartialCardRecognizerConfig(
+        name="GLiNERPartialCardRecognizer",
+        class_name="GLiNERPartialCardRecognizer",
+        supported_languages=["en"],
+        labels=["last 4 digits"],
+        required_context_terms=["credit"],
+        blocklist_terms=["invoice"],
+    )
+
+    dumped = config.model_dump()
+    assert dumped["labels"] == ["last 4 digits"]
+    assert dumped["required_context_terms"] == ["credit"]
+    assert dumped["blocklist_terms"] == ["invoice"]
 
 
 def test_custom_recognizer_config_no_patterns_or_deny_list():
@@ -651,3 +688,60 @@ def test_config_model_map_fallback_to_predefined():
     assert isinstance(recognizer, PredefinedRecognizerConfig)
     assert recognizer.name == "MySpacy"
     assert recognizer.class_name == "SpacyRecognizer"
+
+
+def test_config_model_map_uses_phone_recognizer_config():
+    registry_config = {
+        "recognizers": [
+            {
+                "name": "PhoneRecognizer",
+                "type": "predefined",
+                "supported_language": "en",
+                "leniency": 3,
+                "context_window_chars": 55,
+            }
+        ]
+    }
+    config = RecognizerRegistryConfig(**registry_config)
+    recognizer = config.recognizers[0]
+    assert isinstance(recognizer, PhoneRecognizerConfig)
+    assert recognizer.leniency == 3
+    assert recognizer.context_window_chars == 55
+
+
+def test_config_model_map_uses_date_recognizer_config():
+    registry_config = {
+        "recognizers": [
+            {
+                "name": "DateRecognizer",
+                "type": "predefined",
+                "supported_language": "en",
+                "require_birth_context": True,
+                "context_window_chars": 60,
+            }
+        ]
+    }
+    config = RecognizerRegistryConfig(**registry_config)
+    recognizer = config.recognizers[0]
+    assert isinstance(recognizer, DateRecognizerConfig)
+    assert recognizer.require_birth_context is True
+    assert recognizer.context_window_chars == 60
+
+
+def test_config_model_map_uses_credit_card_recognizer_config():
+    registry_config = {
+        "recognizers": [
+            {
+                "name": "CreditCardRecognizer",
+                "type": "predefined",
+                "supported_language": "en",
+                "reject_partials": True,
+                "min_card_digits": 13,
+            }
+        ]
+    }
+    config = RecognizerRegistryConfig(**registry_config)
+    recognizer = config.recognizers[0]
+    assert isinstance(recognizer, CreditCardRecognizerConfig)
+    assert recognizer.reject_partials is True
+    assert recognizer.min_card_digits == 13

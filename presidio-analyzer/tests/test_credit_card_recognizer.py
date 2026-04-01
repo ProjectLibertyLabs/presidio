@@ -43,6 +43,7 @@ def entities():
         ("my credit card number is 4012-8888-8888-1882", 0, (), (),),
         ("36168002586008", 0, (), (),),
         ("my credit card number is 36168002586008", 0, (), (),),
+        ("my account number is 4012888888881881", 0, (), (),),
         # fmt: on
     ],
 )
@@ -61,3 +62,7 @@ def test_when_all_credit_cards_then_succeed(
         assert res.score == expected_score
     for res, (start, end) in zip(results, expected_res):
         assert_result(res, entities[0], start, end, max_score)
+
+
+def test_when_credit_card_partial_then_not_valid(cc_recognizer):
+    assert cc_recognizer.validate_result("1881") is False
