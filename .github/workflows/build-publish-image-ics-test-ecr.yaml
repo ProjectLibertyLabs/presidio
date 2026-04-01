@@ -83,7 +83,7 @@ jobs:
       - name: Build and Push
         uses: docker/build-push-action@v6
         env:
-          ECR_NAMESPACE: ics-test/cheo-pii-analyzer
+          ECR_NAMESPACE: ics-test/pii-analyzer
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           context: presidio-analyzer
