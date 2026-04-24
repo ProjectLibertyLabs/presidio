@@ -142,3 +142,4 @@ mkdocs/
 /TestResults
 
 .claude
+*.iml

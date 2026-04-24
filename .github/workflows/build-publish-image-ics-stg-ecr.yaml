@@ -5,7 +5,7 @@ concurrency:
 on:
   push:
     branches:
-      - gliner_integration
+      - forked_main
       # XXX Test only
       - test-ci
   workflow_dispatch:
@@ -43,7 +43,7 @@ jobs:
     env:
       DOCKER_REGISTRY: ${{secrets.ICS_STG_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
       AWS_OIDC_ROLE: ${{secrets.ICS_STG_AWS_GITHUB_OIDC_ROLE_ARN}}
-      BRANCH_NAME: gliner_integration
+      BRANCH_NAME: forked_main
     runs-on: ubuntu-22.04
     permissions:
       id-token: write
