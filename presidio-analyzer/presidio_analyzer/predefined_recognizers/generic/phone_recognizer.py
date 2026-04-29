@@ -50,6 +50,11 @@ class PhoneRecognizer(LocalRecognizer):
     )
     DEFAULT_SUPPORTED_REGIONS = ("US", "UK", "DE", "FE", "IL", "IN", "CA", "BR")
     IPV4_REGEX = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+    DOT_BETWEEN_DIGITS_REGEX = re.compile(r"\d\.\d")
+    YEAR_REGEX = re.compile(r"^(?:19|20)\d{2}$")
+    EMAIL_REGEX = re.compile(r"\S+@\S+")
+    EMAIL_SCAN_WINDOW_CHARS = 60
+    CONTEXT_FALLBACK_LENIENCY = 0
 
     def __init__(
         self,
@@ -64,6 +69,11 @@ class PhoneRecognizer(LocalRecognizer):
         negative_context_terms: Optional[Sequence[str]] = None,
         context_window_chars: int = 40,
         reject_numeric_id_without_context: bool = True,
+        reject_preceding_letter: bool = True,
+        reject_dot_separator: bool = True,
+        reject_year_token: bool = True,
+        reject_inside_email: bool = True,
+        min_digits_without_context: int = 7,
         name: Optional[str] = None,
     ):
         context = context if context else self.CONTEXT
@@ -73,6 +83,11 @@ class PhoneRecognizer(LocalRecognizer):
         self.require_valid_number = require_valid_number
         self.context_window_chars = context_window_chars
         self.reject_numeric_id_without_context = reject_numeric_id_without_context
+        self.reject_preceding_letter = reject_preceding_letter
+        self.reject_dot_separator = reject_dot_separator
+        self.reject_year_token = reject_year_token
+        self.reject_inside_email = reject_inside_email
+        self.min_digits_without_context = min_digits_without_context
         self.positive_context_terms = tuple(
             term.lower()
             for term in (
@@ -115,49 +130,94 @@ class PhoneRecognizer(LocalRecognizer):
         :return: List of phone numbers RecognizerResults
         """
         results = []
+        seen_spans = set()
         for region in self.supported_regions:
-            for match in phonenumbers.PhoneNumberMatcher(
-                text, region, leniency=self.leniency
+            for match in self._iter_phone_matches(
+                text=text,
+                region=region,
+                leniency=self.leniency,
             ):
-                try:
-                    match_text = text[match.start : match.end]
-
-                    if self._is_invalid_phone_candidate(
-                        text=text,
-                        match_text=match_text,
-                        start=match.start,
-                        end=match.end,
-                    ):
-                        continue
-
-                    parsed_number = match.number
-                    if (
-                        self.require_possible_number
-                        and not phonenumbers.is_possible_number(parsed_number)
-                    ):
-                        continue
-                    if self.require_valid_number and not phonenumbers.is_valid_number(
-                        parsed_number
-                    ):
-                        continue
-
-                    detected_region = phonenumbers.region_code_for_number(parsed_number)
-                    results += [
-                        self._get_recognizer_result(
-                            match, text, detected_region or region, nlp_artifacts
-                        )
-                    ]
-                except NumberParseException:
+                result = self._build_result_from_match(
+                    match=match,
+                    text=text,
+                    region=region,
+                    require_explicit_context=False,
+                )
+                if result is None:
                     continue
+                seen_spans.add((result.start, result.end))
+                results.append(result)
+
+        if self.leniency != self.CONTEXT_FALLBACK_LENIENCY:
+            for region in self.supported_regions:
+                for match in self._iter_phone_matches(
+                    text=text,
+                    region=region,
+                    leniency=self.CONTEXT_FALLBACK_LENIENCY,
+                ):
+                    if (match.start, match.end) in seen_spans:
+                        continue
+                    result = self._build_result_from_match(
+                        match=match,
+                        text=text,
+                        region=region,
+                        require_explicit_context=True,
+                    )
+                    if result is None:
+                        continue
+                    seen_spans.add((result.start, result.end))
+                    results.append(result)
 
         return EntityRecognizer.remove_duplicates(results)
 
-    def _is_invalid_phone_candidate(
-        self, text: str, match_text: str, start: int, end: int
-    ) -> bool:
-        if self.IPV4_REGEX.match(match_text):
-            return True
+    @staticmethod
+    def _iter_phone_matches(text: str, region: str, leniency: int):
+        yield from phonenumbers.PhoneNumberMatcher(text, region, leniency=leniency)
 
+    def _build_result_from_match(
+        self,
+        match,
+        text: str,
+        region: str,
+        require_explicit_context: bool,
+    ) -> Optional[RecognizerResult]:
+        try:
+            match_text = text[match.start : match.end]
+            has_positive_context, _ = self._context_flags(
+                text=text,
+                start=match.start,
+                end=match.end,
+            )
+            if require_explicit_context and not has_positive_context:
+                return None
+
+            if self._is_invalid_phone_candidate(
+                text=text,
+                match_text=match_text,
+                start=match.start,
+                end=match.end,
+            ):
+                return None
+
+            parsed_number = match.number
+            if (
+                self.require_possible_number
+                and not phonenumbers.is_possible_number(parsed_number)
+            ):
+                return None
+            if self.require_valid_number and not phonenumbers.is_valid_number(
+                parsed_number
+            ):
+                return None
+
+            detected_region = phonenumbers.region_code_for_number(parsed_number)
+            return self._get_recognizer_result(
+                match, text, detected_region or region, None
+            )
+        except NumberParseException:
+            return None
+
+    def _context_flags(self, text: str, start: int, end: int) -> tuple[bool, bool]:
         window_start = max(0, start - self.context_window_chars)
         window_end = min(len(text), end + self.context_window_chars)
         context_window = text[window_start:window_end].lower()
@@ -168,8 +228,52 @@ class PhoneRecognizer(LocalRecognizer):
         has_negative_context = any(
             term in context_window for term in self.negative_context_terms
         )
+        return has_positive_context, has_negative_context
+
+    def _is_invalid_phone_candidate(
+        self, text: str, match_text: str, start: int, end: int
+    ) -> bool:
+        if self.IPV4_REGEX.match(match_text):
+            return True
+
+        has_positive_context, has_negative_context = self._context_flags(
+            text=text,
+            start=start,
+            end=end,
+        )
 
         if has_negative_context and not has_positive_context:
+            return True
+
+        digit_count = sum(1 for c in match_text if c.isdigit())
+        if (
+            self.min_digits_without_context > 0
+            and digit_count < self.min_digits_without_context
+            and not has_positive_context
+        ):
+            return True
+
+        if (
+            self.reject_preceding_letter
+            and start > 0
+            and text[start - 1].isalpha()
+        ):
+            return True
+
+        if (
+            self.reject_dot_separator
+            and self.DOT_BETWEEN_DIGITS_REGEX.search(match_text)
+        ):
+            return True
+
+        if (
+            self.reject_year_token
+            and not has_positive_context
+            and self.YEAR_REGEX.match(match_text.strip())
+        ):
+            return True
+
+        if self.reject_inside_email and self._is_inside_email(text, start, end):
             return True
 
         if (
@@ -184,6 +288,14 @@ class PhoneRecognizer(LocalRecognizer):
             if digit_groups and any(len(group) > 7 for group in digit_groups):
                 return True
 
+        return False
+
+    def _is_inside_email(self, text: str, start: int, end: int) -> bool:
+        window_start = max(0, start - self.EMAIL_SCAN_WINDOW_CHARS)
+        window_end = min(len(text), end + self.EMAIL_SCAN_WINDOW_CHARS)
+        for match in self.EMAIL_REGEX.finditer(text, window_start, window_end):
+            if match.start() <= start and end <= match.end():
+                return True
         return False
 
     def _get_recognizer_result(self, match, text, region, nlp_artifacts):

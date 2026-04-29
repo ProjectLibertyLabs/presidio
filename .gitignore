@@ -143,3 +143,4 @@ mkdocs/
 
 .claude
 *.iml
+/presidio-analyzer/models/

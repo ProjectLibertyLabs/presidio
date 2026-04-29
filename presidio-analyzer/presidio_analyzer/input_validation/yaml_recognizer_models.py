@@ -227,6 +227,28 @@ class GLiNERPartialCardRecognizerConfig(PredefinedRecognizerConfig):
     labels: Optional[List[str]] = Field(
         None, description="GLiNER ad-hoc labels for partial cards"
     )
+
+
+class PrivacyFilterRecognizerConfig(PredefinedRecognizerConfig):
+    """Configuration for PrivacyFilterONNXRecognizer."""
+
+    model_config = ConfigDict(extra="allow")
+
+    model_dir: Optional[str] = Field(
+        None, description="Directory containing the privacy-filter ONNX model files"
+    )
+    providers: Optional[List[str]] = Field(
+        None, description="ONNX Runtime execution providers (e.g. CPUExecutionProvider)"
+    )
+    entity_mapping: Optional[Dict[str, str]] = Field(
+        None, description="Privacy-filter label to Presidio entity mapping"
+    )
+    target_entities: Optional[List[str]] = Field(
+        None, description="Entities allowed for this recognizer"
+    )
+    score_threshold: Optional[float] = Field(
+        None, description="Minimum confidence score for a detection to be emitted"
+    )
     required_context_terms: Optional[List[str]] = Field(
         None, description="Context required before fallback is allowed"
     )
@@ -235,9 +257,6 @@ class GLiNERPartialCardRecognizerConfig(PredefinedRecognizerConfig):
     )
     blocklist_terms: Optional[List[str]] = Field(
         None, description="Context terms that suppress fallback"
-    )
-    target_entities: Optional[List[str]] = Field(
-        None, description="Entities allowed for this recognizer"
     )
 
 
@@ -417,6 +436,7 @@ class RecognizerRegistryConfig(BaseModel):
             EdgeONNXGLiNERRecognizerConfig,
             ContextAwareUsSsnRecognizerConfig,
             GLiNERPartialCardRecognizerConfig,
+            PrivacyFilterRecognizerConfig,
             PredefinedRecognizerConfig,
             CustomRecognizerConfig,
             str,
@@ -603,6 +623,7 @@ CONFIG_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "EdgeONNXGLiNERRecognizer": EdgeONNXGLiNERRecognizerConfig,
     "ContextAwareUsSsnRecognizer": ContextAwareUsSsnRecognizerConfig,
     "GLiNERPartialCardRecognizer": GLiNERPartialCardRecognizerConfig,
+    "PrivacyFilterONNXRecognizer": PrivacyFilterRecognizerConfig,
     "PhoneRecognizer": PhoneRecognizerConfig,
     "DateRecognizer": DateRecognizerConfig,
     "CreditCardRecognizer": CreditCardRecognizerConfig,

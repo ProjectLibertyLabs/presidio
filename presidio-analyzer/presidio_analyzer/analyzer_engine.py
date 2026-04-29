@@ -9,6 +9,14 @@ from presidio_analyzer import (
     EntityRecognizer,
     RecognizerResult,
 )
+from presidio_analyzer.analyzer.gliner_edge.constants import (
+    GLINER_DOB_RECOGNIZER_NAME,
+    GLINER_FREE_TEXT_RECOGNIZER_NAME,
+    PRIVACY_FILTER_RECOGNIZER_NAME,
+)
+from presidio_analyzer.analyzer.gliner_edge.routing_policy import (
+    filter_results_by_source,
+)
 from presidio_analyzer.app_tracer import AppTracer
 from presidio_analyzer.context_aware_enhancers import (
     ContextAwareEnhancer,
@@ -245,6 +253,21 @@ class AnalyzerEngine:
         results = self._enhance_using_context(
             text, results, nlp_artifacts, recognizers, context
         )
+        # Source ownership routing is disabled (empty entity sets); the call
+        # still applies phone/card deduplication, phone overlap suppression,
+        # and location result trimming when the privacy-filter recognizer is active.
+        results = filter_results_by_source(
+            text=text,
+            results=results,
+            use_source_routing=False,
+            gliner_owned_entities=set(),
+            regex_owned_entities=set(),
+            gliner_recognizer_names=(
+                GLINER_FREE_TEXT_RECOGNIZER_NAME,
+                GLINER_DOB_RECOGNIZER_NAME,
+            ),
+            route_location_results=self._should_route_location_results(recognizers),
+        )
 
         if self.log_decision_process:
             self.app_tracer.trace(
@@ -265,6 +288,11 @@ class AnalyzerEngine:
             results = self.__remove_decision_process(results)
 
         return results
+
+    @staticmethod
+    def _should_route_location_results(recognizers: List[EntityRecognizer]) -> bool:
+        recognizer_names = {recognizer.name for recognizer in recognizers}
+        return PRIVACY_FILTER_RECOGNIZER_NAME in recognizer_names
 
     def _enhance_using_context(
         self,

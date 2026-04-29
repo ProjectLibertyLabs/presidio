@@ -1,0 +1,113 @@
+# syntax=docker/dockerfile:1
+
+# ─────────────────────────────────────────────────────────────
+# Stage 1: builder — install deps into /app/.venv with CPU torch
+# ─────────────────────────────────────────────────────────────
+FROM python:3.12-slim@sha256:9e01bf1ae5db7649a236da7be1e94ffbbbdd7a93f867dd0d8d5720d9e1f89fab AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    HF_HOME=/app/.cache/huggingface \
+    PATH=/app/.venv/bin:$PATH
+
+ARG NLP_CONF_FILE=presidio_analyzer/conf/privacy_filter_nlp.yaml
+ARG GLINER_MODEL_ID=knowledgator/gliner-pii-edge-v1.0
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends gcc g++ curl \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Pre-install CPU-only torch BEFORE anything that pulls torch transitively.
+# Without this, gliner's transitive resolve drags in the CUDA build of torch
+# plus ~2.8 GB of nvidia-* / cudnn / nccl / triton wheels.
+RUN pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      --extra-index-url https://pypi.org/simple \
+      torch
+
+RUN pip install --no-cache-dir poetry==2.3.2
+
+COPY pyproject.toml poetry.lock /app/
+RUN poetry install --no-root --only=main -E server -E gliner --no-cache
+
+# Pin the validated gliner + onnxruntime pair used by the parity profile.
+RUN /app/.venv/bin/pip install --no-cache-dir \
+      "gliner==0.2.24" \
+      "onnxruntime==1.23.2"
+
+# Bake in the GLiNER pii-edge model so runtime needs no Hugging Face egress.
+# GLiNER.from_pretrained / snapshot_download honour HF_HOME, so this populates
+# /app/.cache/huggingface/hub/models--knowledgator--gliner-pii-edge-v1.0/.
+RUN /app/.venv/bin/python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='${GLINER_MODEL_ID}')"
+
+# Bake in the spaCy model (en_core_web_lg) into the venv.
+COPY install_nlp_models.py /app/
+COPY ${NLP_CONF_FILE} /app/${NLP_CONF_FILE}
+RUN /app/.venv/bin/python install_nlp_models.py --conf_file ${NLP_CONF_FILE}
+
+# Strip waste from the venv — tests, bytecode caches, optional debug files.
+RUN find /app/.venv -type d \( -name tests -o -name __pycache__ \) -prune -exec rm -rf {} + \
+  && find /app/.venv -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+
+# ─────────────────────────────────────────────────────────────
+# Stage 2: runtime — slim image, venv + HF cache copied across
+# ─────────────────────────────────────────────────────────────
+FROM python:3.12-slim@sha256:9e01bf1ae5db7649a236da7be1e94ffbbbdd7a93f867dd0d8d5720d9e1f89fab AS runtime
+
+# curl: HEALTHCHECK probe.
+# libgomp1: OpenMP runtime required by torch on linux.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl libgomp1 \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1001 presidio
+
+WORKDIR /app
+# Make WORKDIR writable by the runtime user so gunicorn 25's control_socket
+# (default: ./gunicorn.ctl) can be created without "[Errno 13] Permission denied".
+RUN chown presidio:presidio /app
+
+# Build-arg overrides for the analyzer config bundle (mirrors Dockerfile.gliner-edge
+# and the original Dockerfile.privacy-filter — re-declared because ARGs are
+# scoped per stage).
+ARG NLP_CONF_FILE=presidio_analyzer/conf/privacy_filter_nlp.yaml
+ARG ANALYZER_CONF_FILE=presidio_analyzer/conf/privacy_filter_analyzer.yaml
+ARG RECOGNIZER_REGISTRY_CONF_FILE=presidio_analyzer/conf/privacy_filter_recognizers.yaml
+
+COPY --from=builder --chown=presidio:presidio /app/.venv /app/.venv
+COPY --from=builder --chown=presidio:presidio /app/.cache/huggingface /app/.cache/huggingface
+
+# Application source — only what the analyzer needs at runtime.
+COPY --chown=presidio:presidio presidio_analyzer /app/presidio_analyzer
+COPY --chown=presidio:presidio clawdefender /app/clawdefender
+COPY --chown=presidio:presidio app.py gunicorn_conf.py logging.ini /app/
+
+ENV PATH=/app/.venv/bin:$PATH \
+    HF_HOME=/app/.cache/huggingface \
+    ANALYZER_CONF_FILE=${ANALYZER_CONF_FILE} \
+    NLP_CONF_FILE=${NLP_CONF_FILE} \
+    RECOGNIZER_REGISTRY_CONF_FILE=${RECOGNIZER_REGISTRY_CONF_FILE} \
+    PRIVACY_FILTER_MODEL_PATH=/models/privacy-filter \
+    PORT=3000 \
+    WORKERS=1 \
+    # Cap BLAS / OpenMP / ONNX thread fan-out so a multi-threaded gunicorn
+    # worker doesn't oversubscribe the host CPU (gthread × N intra-op =
+    # CPU storm; surfaces as multi-second p99 latency under eval load).
+    OMP_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    ONNX_INTRA_OP_NUM_THREADS=2 \
+    ONNX_INTER_OP_NUM_THREADS=1
+
+USER 1001
+
+EXPOSE ${PORT}
+HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:${PORT}/livez || exit 1
+
+CMD ["gunicorn", "-c", "gunicorn_conf.py", "app:create_app()"]
