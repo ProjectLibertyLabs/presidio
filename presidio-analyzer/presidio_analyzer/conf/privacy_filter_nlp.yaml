@@ -2,3 +2,17 @@ nlp_engine_name: spacy
 models:
   - lang_code: en
     model_name: en_core_web_lg
+
+ner_model_configuration:
+  labels_to_ignore:
+    - CARDINAL
+    - EVENT
+    - LANGUAGE
+    - LAW
+    - MONEY
+    - ORDINAL
+    - PERCENT
+    - PRODUCT
+    - QUANTITY
+    - WORK_OF_ART
+    - FAC
