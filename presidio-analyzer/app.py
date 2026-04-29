@@ -173,11 +173,6 @@ class Server:
                         "analyze slow: items=%d chars=%d findings=%d duration_ms=%.1f",
                         len(batch), total_chars, total_findings, duration_ms,
                     )
-                else:
-                    self.logger.info(
-                        "analyze: items=%d chars=%d findings=%d duration_ms=%.1f",
-                        len(batch), total_chars, total_findings, duration_ms,
-                    )
 
                 return Response(
                     json.dumps(
