@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import time
 from logging.config import fileConfig
 from pathlib import Path
 from typing import Tuple
@@ -54,7 +55,13 @@ class Server:
     VALID_CHECK_TYPES = {"validate", "url"}
 
     def __init__(self):
-        fileConfig(Path(Path(__file__).parent, LOGGING_CONF_FILE))
+        # disable_existing_loggers=False so gunicorn's `gunicorn.access` /
+        # `gunicorn.error` loggers (configured in the master before this worker
+        # imports the app) keep emitting after Server() runs.
+        fileConfig(
+            Path(Path(__file__).parent, LOGGING_CONF_FILE),
+            disable_existing_loggers=False,
+        )
         self.logger = logging.getLogger("presidio-analyzer")
         self.logger.setLevel(os.environ.get("LOG_LEVEL", self.logger.level))
         self.app = Flask(__name__)
@@ -112,6 +119,7 @@ class Server:
         def analyze() -> Tuple[str, int]:
             """Execute the analyzer function."""
             # Parse the request params
+            t_start = time.perf_counter()
             try:
                 req_data = AnalyzerRequest(request.get_json())
                 if not req_data.text:
@@ -119,6 +127,9 @@ class Server:
 
                 batch_request = isinstance(req_data.text, list)
                 batch = req_data.text if batch_request else [req_data.text]
+                total_chars = sum(
+                    len(t) for t in batch if isinstance(t, str)
+                )
 
                 if not req_data.language:
                     raise Exception("No language provided")
@@ -151,6 +162,22 @@ class Server:
                 for recognizer_result_list in iterator:
                     _exclude_attributes_from_dto(recognizer_result_list)
                     results.append(recognizer_result_list)
+
+                duration_ms = (time.perf_counter() - t_start) * 1000
+                total_findings = sum(len(r) for r in results)
+                # Per-request structured log: makes it trivial to grep
+                # `docker logs` for slow rows. duration_ms is wall clock from
+                # request parse to response serialize.
+                if duration_ms >= float(os.environ.get("ANALYZE_SLOW_MS", "1000")):
+                    self.logger.warning(
+                        "analyze slow: items=%d chars=%d findings=%d duration_ms=%.1f",
+                        len(batch), total_chars, total_findings, duration_ms,
+                    )
+                else:
+                    self.logger.info(
+                        "analyze: items=%d chars=%d findings=%d duration_ms=%.1f",
+                        len(batch), total_chars, total_findings, duration_ms,
+                    )
 
                 return Response(
                     json.dumps(

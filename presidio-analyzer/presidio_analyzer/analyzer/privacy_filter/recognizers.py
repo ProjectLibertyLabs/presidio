@@ -569,7 +569,22 @@ class PrivacyFilterONNXRecognizer(LocalRecognizer):
                 if key in raw_tokenizer_config:
                     tokenizer_kwargs[key] = raw_tokenizer_config[key]
         tokenizer = PreTrainedTokenizerFast(**tokenizer_kwargs)
-        session = ort.InferenceSession(str(onnx_path), providers=providers)
+
+        # Cap ONNX thread fan-out. Defaults to physical core count, which on a
+        # multi-threaded gunicorn worker (THREADS=4) explodes to 4×N threads
+        # all fighting for the same cores; on Docker Desktop this surfaces as
+        # 100s+ p99 latency and "Server disconnected" on the client. Override
+        # with ONNX_INTRA_OP_NUM_THREADS / ONNX_INTER_OP_NUM_THREADS if needed.
+        sess_options = ort.SessionOptions()
+        intra = int(os.environ.get("ONNX_INTRA_OP_NUM_THREADS", "2"))
+        inter = int(os.environ.get("ONNX_INTER_OP_NUM_THREADS", "1"))
+        sess_options.intra_op_num_threads = intra
+        sess_options.inter_op_num_threads = inter
+        session = ort.InferenceSession(
+            str(onnx_path),
+            sess_options=sess_options,
+            providers=providers,
+        )
 
         self._session = session
         self._tokenizer = tokenizer

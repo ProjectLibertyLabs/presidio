@@ -94,7 +94,15 @@ ENV PATH=/app/.venv/bin:$PATH \
     RECOGNIZER_REGISTRY_CONF_FILE=${RECOGNIZER_REGISTRY_CONF_FILE} \
     PRIVACY_FILTER_MODEL_PATH=/models/privacy-filter \
     PORT=3000 \
-    WORKERS=1
+    WORKERS=1 \
+    # Cap BLAS / OpenMP / ONNX thread fan-out so a multi-threaded gunicorn
+    # worker doesn't oversubscribe the host CPU (gthread × N intra-op =
+    # CPU storm; surfaces as multi-second p99 latency under eval load).
+    OMP_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    ONNX_INTRA_OP_NUM_THREADS=2 \
+    ONNX_INTER_OP_NUM_THREADS=1
 
 USER 1001
 
