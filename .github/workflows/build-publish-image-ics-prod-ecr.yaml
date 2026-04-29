@@ -81,7 +81,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           context: presidio-analyzer
-          file: ${{matrix.service}}/Dockerfile.gliner-edge
+          file: ${{matrix.service}}/Dockerfile.privacy-filter
           platforms: ${{env.DOCKER_PLATFORMS}}
           push: true
           tags: |
