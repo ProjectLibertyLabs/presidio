@@ -18,6 +18,7 @@ from ...predefined_recognizers.country_specific.us.us_ssn_recognizer import (
     UsSsnRecognizer,
 )
 from ...predefined_recognizers.ner.gliner_recognizer import GLiNERRecognizer
+from .postprocessing import filter_by_target_entities
 
 try:
     from gliner import GLiNER
@@ -128,7 +129,6 @@ class EdgeONNXGLiNERRecognizer(GLiNERRecognizer):
         )
 
         requested = set(entities or [])
-        target = set(self.target_entities or [])
 
         results = []
         for pred in predictions:
@@ -137,8 +137,6 @@ class EdgeONNXGLiNERRecognizer(GLiNERRecognizer):
             )
 
             if requested and presidio_entity not in requested:
-                continue
-            if target and presidio_entity not in target:
                 continue
 
             results.append(
@@ -157,7 +155,7 @@ class EdgeONNXGLiNERRecognizer(GLiNERRecognizer):
                 )
             )
 
-        return results
+        return filter_by_target_entities(results, self.target_entities)
 
 
 class ContextAwareUsSsnRecognizer(UsSsnRecognizer):
@@ -194,16 +192,10 @@ class ContextAwareUsSsnRecognizer(UsSsnRecognizer):
         if not results:
             return []
 
-        requested = set(entities or [])
-        target = set(self.target_entities or [])
+        results = filter_by_target_entities(results, self.target_entities)
 
         filtered = []
         for result in results:
-            if requested and result.entity_type not in requested:
-                continue
-            if target and result.entity_type not in target:
-                continue
-
             if result.score >= self.min_score:
                 filtered.append(result)
                 continue
@@ -223,6 +215,22 @@ class ContextAwareUsSsnRecognizer(UsSsnRecognizer):
 
 class GLiNERPartialCardRecognizer(LocalRecognizer):
     """Heuristic detector for partial card mentions using GLiNER ad-hoc labels."""
+
+    LAST4_CONTEXT_RE = re.compile(
+        r"""
+        (?:
+            \bcard\s+ending(?:\s+in|\s+with)?\s+\d{4}\b
+            |
+            \bending\s+(?:in|with)\s+\d{4}\b
+            |
+            \blast\s+(?:4|four)\s+digits?\b
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    MASKED_LAST4_RE = re.compile(
+        r"\b(?:[*xX#][*\s\-xX#]{1,}|\*{2,}\s*|x{2,}\s*)\d{4}\b"
+    )
 
     def __init__(
         self,
@@ -363,23 +371,16 @@ class GLiNERPartialCardRecognizer(LocalRecognizer):
             return []
 
         text_lower = text.lower()
-        has_last4_phrase = bool(
-            re.search(
-                r"(card\s+ending|ending\s+(?:in|with)\s+\d{4}|last\s+(?:4|four)\s+digits?.*card)",
-                text_lower,
-            )
-        )
-        has_required_context = any(
-            term in text_lower for term in self.required_context_terms
-        )
-        if not has_required_context and not has_last4_phrase:
+        has_last4_phrase = bool(self.LAST4_CONTEXT_RE.search(text))
+        has_masked_last4 = bool(self.MASKED_LAST4_RE.search(text))
+        if not has_last4_phrase and not has_masked_last4:
             return []
 
         has_blocked_context = any(term in text_lower for term in self.blocklist_terms)
         has_strong_context = any(
             term in text_lower for term in self.strong_context_terms
         )
-        if has_blocked_context and not has_strong_context:
+        if has_blocked_context and not has_strong_context and not has_last4_phrase:
             return []
 
         predictions = self.gliner.predict_entities(

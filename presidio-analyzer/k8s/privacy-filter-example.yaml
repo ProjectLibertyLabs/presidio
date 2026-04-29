@@ -1,0 +1,146 @@
+# Kubernetes deployment example — template, not a deployable manifest.
+# Replace `your-registry/presidio-analyzer-privacy-filter:tag` with your image,
+# and the HUGGINGFACE_HUB_TOKEN placeholder with a real secret before applying.
+# The image downloads the OpenAI privacy-filter ONNX model into a
+# PersistentVolumeClaim before the analyzer starts. Runs on any CPU node —
+# no GPU or special node labels needed.
+#
+# Note on egress: the GLiNER recognizers (LOCATION fallback + partial-card)
+# also fetch knowledgator/gliner-pii-edge-v1.0 from Hugging Face on first
+# startup of the main container. Either allow egress or pre-populate that
+# model into the same PVC out-of-band.
+#
+# Prerequisites:
+#   1. Build the image: make docker-build-privacy-filter
+#   2. Push: docker push <your-registry>/presidio-analyzer-privacy-filter:<tag>
+#   3. Set HUGGINGFACE_HUB_TOKEN in the Secret below (only required for
+#      gated/private repos — openai/privacy-filter is public, but the GLiNER
+#      models or rate-limited downloads benefit from a token).
+#   4. kubectl apply -f k8s/privacy-filter-example.yaml
+---
+# ReadWriteOnce works for a single-replica deployment on one node. For multi-
+# replica / multi-node rollouts, either switch accessModes to ReadWriteMany
+# (requires a suitable StorageClass such as EFS / Azure Files / Filestore) or
+# run a one-shot Job that populates the volume first and then mount it RO from
+# each pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: privacy-filter-models
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: presidio-analyzer-privacy-filter-config
+data:
+  PORT: "3000"
+  WORKERS: "1"
+  ANALYZER_CONF_FILE: presidio_analyzer/conf/privacy_filter_analyzer.yaml
+  NLP_CONF_FILE: presidio_analyzer/conf/privacy_filter_nlp.yaml
+  RECOGNIZER_REGISTRY_CONF_FILE: presidio_analyzer/conf/privacy_filter_recognizers.yaml
+  # The privacy-filter ONNX model is mounted at this path by the PVC.
+  PRIVACY_FILTER_MODEL_PATH: /models/privacy-filter
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: presidio-analyzer-privacy-filter-secrets
+type: Opaque
+stringData:
+  HUGGINGFACE_HUB_TOKEN: replace-me
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: presidio-analyzer-privacy-filter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: presidio-analyzer-privacy-filter
+  template:
+    metadata:
+      labels:
+        app: presidio-analyzer-privacy-filter
+    spec:
+      terminationGracePeriodSeconds: 5
+      initContainers:
+        # Idempotent: the script writes a .download_complete marker on first
+        # successful download. On every subsequent pod restart it sees the
+        # marker on the PVC and exits in <1s without contacting Hugging Face.
+        - name: download-privacy-filter-model
+          image: your-registry/presidio-analyzer-privacy-filter:tag
+          imagePullPolicy: IfNotPresent
+          workingDir: /app
+          command: ["/bin/bash", "/app/scripts/download_privacy_filter_model.sh"]
+          env:
+            - name: PRIVACY_FILTER_MODEL_PATH
+              value: /models/privacy-filter
+          envFrom:
+            - secretRef:
+                name: presidio-analyzer-privacy-filter-secrets
+          volumeMounts:
+            - name: privacy-filter-models
+              mountPath: /models
+      containers:
+        - name: api
+          image: your-registry/presidio-analyzer-privacy-filter:tag
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: presidio-analyzer-privacy-filter-config
+          volumeMounts:
+            - name: privacy-filter-models
+              mountPath: /models
+              readOnly: true
+          ports:
+            - containerPort: 3000
+              name: http
+          resources:
+            requests:
+              cpu: "1"
+              memory: 3Gi
+            limits:
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: privacy-filter-models
+          persistentVolumeClaim:
+            claimName: privacy-filter-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: presidio-analyzer-privacy-filter
+spec:
+  selector:
+    app: presidio-analyzer-privacy-filter
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

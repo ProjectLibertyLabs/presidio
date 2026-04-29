@@ -54,6 +54,18 @@ def test_partial_card_recognizer_detects_last_four():
     assert text[results[0].start : results[0].end] == "4821"
 
 
+def test_partial_card_recognizer_requires_explicit_last4_context():
+    recognizer = GLiNERPartialCardRecognizer(enabled=False)
+    recognizer.enabled = True
+    recognizer.gliner = MagicMock()
+
+    text = "Visit https://secure.bankofamerica.com/legal-documents?transaction_id=12345"
+    results = recognizer.analyze(text=text, entities=["CREDIT_CARD"])
+
+    assert results == []
+    recognizer.gliner.predict_entities.assert_not_called()
+
+
 def test_partial_card_respects_target_entities():
     recognizer = GLiNERPartialCardRecognizer(enabled=False, target_entities=["US_SSN"])
     recognizer.enabled = True

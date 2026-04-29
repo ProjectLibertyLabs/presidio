@@ -24,6 +24,7 @@ from presidio_analyzer.analyzer.gliner_edge import (
     EdgeONNXGLiNERRecognizer,
     GLiNERPartialCardRecognizer,
 )
+from presidio_analyzer.analyzer.privacy_filter import PrivacyFilterONNXRecognizer
 
 # Define default loggers behavior
 
@@ -59,4 +60,5 @@ __all__ = [
     "EdgeONNXGLiNERRecognizer",
     "ContextAwareUsSsnRecognizer",
     "GLiNERPartialCardRecognizer",
+    "PrivacyFilterONNXRecognizer",
 ]

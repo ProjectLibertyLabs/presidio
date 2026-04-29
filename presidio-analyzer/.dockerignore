@@ -111,3 +111,4 @@ local_settings.py
 deploytoazure.json
 install_dependencies.sh
 
+models

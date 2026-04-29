@@ -53,8 +53,11 @@ def test_when_all_phones_then_succeed(
         # fmt: off
         ("My US number is (415) 555-0132, and my international one is415-555-0132",
          1, ["PHONE_NUMBER"], ((16, 30), ), 0.4, 1),
+        # leniency=0 (ANY) still cannot recover a number glued to a preceding
+        # letter — the recognizer's preceding-letter filter rejects "is415..."
+        # as an email-/identifier-suffix lookalike.
         ("My US number is (415) 555-0132, and my international one is415-555-0132",
-         2, ["PHONE_NUMBER", "PHONE_NUMBER"], ((16, 30), (59, 71), ), 0.4, 0),
+         1, ["PHONE_NUMBER"], ((16, 30), ), 0.4, 0),
 
         ("My US number is (415) 555-0132, and my international one is 91-415-555-0132",
          1, ["PHONE_NUMBER"], ((16, 30), ), 0.4, 2),
@@ -148,6 +151,8 @@ def test_get_analysis_explanation():
         ("Policy Number: 123456-7890", 0),
         ("The server ip is 192.168.1.100", 0),
         ("Please call +1 415 555 0132 for support.", 1),
+        ("If you have questions, call 832-1000-9984 right away.", 1),
+        ("Send completed forms to fax number 872-802-3377.", 1),
     ],
 )
 def test_when_phone_candidate_in_negative_context_then_filtered(
@@ -157,3 +162,68 @@ def test_when_phone_candidate_in_negative_context_then_filtered(
     recognizer = PhoneRecognizer()
     results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
     assert len(results) == expected_len
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Reach out at morales85@icloud.com for details.",
+        "Email lucask59@yahoo.com about the invoice.",
+        "Send to frances.morgan1959@icloud.com today.",
+    ],
+)
+def test_when_email_local_part_numeric_suffix_then_no_phone(
+    spacy_nlp_engine, text
+):
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert results == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "She was born in 1959 and moved to Spain.",
+        "The contract was signed in 2024.",
+    ],
+)
+def test_when_year_token_without_phone_context_then_no_phone(
+    spacy_nlp_engine, text
+):
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert results == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Interest rate is 4.500 percent annually.",
+        "Hemoglobin reading 14.5 g/dL recorded.",
+        "Statement date 05.06.2028 closed out.",
+    ],
+)
+def test_when_dot_decimal_then_no_phone(spacy_nlp_engine, text):
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert results == []
+
+
+def test_when_match_preceded_by_letter_then_no_phone(spacy_nlp_engine):
+    text = "Username lucask59 was activated yesterday."
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert results == []
+
+
+def test_when_phone_after_colon_then_detected(spacy_nlp_engine):
+    text = "Phone: (415) 555-0132 is the main line."
+    nlp_artifacts = spacy_nlp_engine.process_text(text, "en")
+    recognizer = PhoneRecognizer()
+    results = recognizer.analyze(text, ["PHONE_NUMBER"], nlp_artifacts=nlp_artifacts)
+    assert len(results) == 1
+    assert text[results[0].start : results[0].end] == "(415) 555-0132"
