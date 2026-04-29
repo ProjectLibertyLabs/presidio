@@ -14,6 +14,7 @@ SSN_ENTITY = "US_SSN"
 EMAIL_ENTITY = "EMAIL_ADDRESS"
 PHONE_DIGIT_OVERLAP_ENTITIES = (SSN_ENTITY, CREDIT_CARD_ENTITY)
 SAME_CATEGORY_SCORE_CLOSE_THRESHOLD = 0.1
+LOW_CONFIDENCE_PHONE_SCORE = 0.5
 EMPTY_SET = frozenset()
 STREET_SUFFIXES = frozenset(
     {
@@ -331,16 +332,24 @@ def _suppress_phone_overlapping_other_entities(text: str, results: List) -> List
     Real phones, SSNs, and credit cards can all share the dashed-digit shape, so
     PhoneRecognizer happily fires on an SSN span even when ContextAwareUsSsnRecognizer
     has already labeled it. Likewise, the digit suffix of an email local part
-    (`morales85@…`) is sometimes matched as a phone. This helper removes those
-    cases by checking each PHONE_NUMBER against the other recognizers' results.
+    (`morales85@…`) is sometimes matched as a phone. Low-confidence phone spans
+    fully contained in stronger non-phone entities are also false positives.
     """
-    other_spans: List[Tuple[str, int, int, str]] = []
+    other_spans: List[Tuple[str, int, int, str, float]] = []
     for result in results:
         if result.entity_type in PHONE_DIGIT_OVERLAP_ENTITIES:
             digits = _normalize_digits(_slice_text(text, result.start, result.end))
-            other_spans.append((result.entity_type, result.start, result.end, digits))
+            other_spans.append(
+                (result.entity_type, result.start, result.end, digits, result.score)
+            )
         elif result.entity_type == EMAIL_ENTITY:
-            other_spans.append((EMAIL_ENTITY, result.start, result.end, ""))
+            other_spans.append(
+                (EMAIL_ENTITY, result.start, result.end, "", result.score)
+            )
+        elif result.entity_type != PHONE_ENTITY:
+            other_spans.append(
+                (result.entity_type, result.start, result.end, "", result.score)
+            )
 
     if not other_spans:
         return results
@@ -353,7 +362,16 @@ def _suppress_phone_overlapping_other_entities(text: str, results: List) -> List
 
         phone_digits = _normalize_digits(_slice_text(text, result.start, result.end))
         drop = False
-        for entity_type, start, end, digits in other_spans:
+        for entity_type, start, end, digits, score in other_spans:
+            if (
+                result.score <= LOW_CONFIDENCE_PHONE_SCORE
+                and result.score < score
+                and start <= result.start
+                and result.end <= end
+            ):
+                drop = True
+                break
+
             if entity_type == EMAIL_ENTITY:
                 if start <= result.start and result.end <= end:
                     drop = True
