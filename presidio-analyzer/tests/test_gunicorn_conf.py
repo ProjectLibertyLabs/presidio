@@ -1,5 +1,7 @@
 """Tests for Gunicorn config hooks and shutdown readiness behavior."""
 
+import os
+import signal
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +19,7 @@ sys.modules.setdefault("presidio_analyzer.pattern", MagicMock())
 sys.modules.setdefault("presidio_analyzer.nlp_engine", MagicMock())
 sys.modules.setdefault("presidio_analyzer.predefined_recognizers", MagicMock())
 
-from gunicorn_conf import worker_int
+from gunicorn_conf import post_fork, worker_int
 
 
 def _build_worker(flask_app):
@@ -74,3 +76,26 @@ def test_worker_int_flips_readyz_from_200_to_503(server):
         shutting_down_resp = client.get("/readyz")
         assert shutting_down_resp.status_code == 503
         assert shutting_down_resp.get_json() == {"status": "shutting down"}
+
+
+def test_post_fork_installs_sigterm_handler_that_flips_shutting_down():
+    # k8s sends SIGTERM on rollout; gunicorn's worker_int hook does not fire on
+    # that path. post_fork must install a SIGTERM handler that flips the flag
+    # so /readyz drains traffic before workers exit.
+    config = {"SHUTTING_DOWN": False}
+    flask_app = MagicMock()
+    flask_app.config = config
+    worker = _build_worker(flask_app)
+
+    prev = signal.getsignal(signal.SIGTERM)
+    prev_called = []
+    signal.signal(signal.SIGTERM, lambda s, f: prev_called.append(True))
+    try:
+        post_fork(server=MagicMock(), worker=worker)
+        os.kill(os.getpid(), signal.SIGTERM)
+        assert config["SHUTTING_DOWN"] is True
+        # The chained handler must call the previous SIGTERM handler so
+        # gunicorn's own shutdown logic still runs.
+        assert prev_called == [True]
+    finally:
+        signal.signal(signal.SIGTERM, prev)

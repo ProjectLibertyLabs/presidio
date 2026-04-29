@@ -1,6 +1,7 @@
 """Gunicorn configuration for Presidio Analyzer."""
 
 import os
+import signal
 
 bind = f"0.0.0.0:{os.environ.get('PORT', '3000')}"
 workers = int(os.environ.get("WORKERS", 1))
@@ -20,6 +21,32 @@ accesslog = os.environ.get("GUNICORN_ACCESS_LOG", "-")
 access_log_format = '%(h)s "%(r)s" %(s)s %(b)s %(L)s'
 
 
+def _flip_shutting_down(worker):
+    """Best-effort flip of the /readyz drain flag. Safe if app not yet built."""
+    try:
+        worker.app.wsgi().config["SHUTTING_DOWN"] = True
+    except Exception:
+        pass
+
+
+def post_fork(server, worker):
+    """Install a SIGTERM handler in each worker so /readyz flips on k8s drain.
+
+    Gunicorn's worker_int hook only fires on SIGINT/SIGQUIT, but Kubernetes
+    sends SIGTERM on pod termination. Without this hook the SHUTTING_DOWN flag
+    never flips during a normal rollout and kube-proxy keeps routing traffic
+    to a draining pod.
+    """
+    prev = signal.getsignal(signal.SIGTERM)
+
+    def _chained(signum, frame):
+        _flip_shutting_down(worker)
+        if callable(prev):
+            prev(signum, frame)
+
+    signal.signal(signal.SIGTERM, _chained)
+
+
 def worker_int(worker):
     """Handle SIGINT/SIGQUIT during graceful worker shutdown."""
-    worker.app.wsgi().config["SHUTTING_DOWN"] = True
+    _flip_shutting_down(worker)
