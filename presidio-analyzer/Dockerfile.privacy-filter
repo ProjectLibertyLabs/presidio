@@ -86,6 +86,7 @@ COPY --from=builder --chown=presidio:presidio /app/.cache/huggingface /app/.cach
 COPY --chown=presidio:presidio presidio_analyzer /app/presidio_analyzer
 COPY --chown=presidio:presidio clawdefender /app/clawdefender
 COPY --chown=presidio:presidio app.py gunicorn_conf.py logging.ini /app/
+COPY --chown=presidio:presidio scripts /app/scripts
 
 ENV PATH=/app/.venv/bin:$PATH \
     HF_HOME=/app/.cache/huggingface \
