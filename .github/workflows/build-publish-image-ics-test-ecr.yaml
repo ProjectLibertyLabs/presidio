@@ -16,28 +16,8 @@ env:
   DOCKER_PLATFORMS: linux/amd64
 
 jobs:
-  changes:
-    name: Changes
-    runs-on: ubuntu-24.04
-    outputs:
-      docker-images: ${{steps.filter.outputs.docker-images}}
-    steps:
-      - name: Check Out Repo
-        uses: actions/checkout@v5
-      - name: Check for Changed Files
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            docker-images:
-              - '.github/workflows/build-publish-image-ics-test-ecr.yaml'
-              - 'presidio-analyzer/**'
-              - '*'
-
   build-publish-docker-images:
-    needs: changes
     name: Build and Publish to ICS Test ECR
-    if: needs.changes.outputs.docker-images == 'true'
     env:
       DOCKER_REGISTRY: ${{secrets.ICS_TEST_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
       AWS_OIDC_ROLE: ${{secrets.ICS_TEST_AWS_GITHUB_OIDC_ROLE_ARN}}
@@ -57,7 +37,7 @@ jobs:
       - name: Derive Short SHA
         id: short-sha
         run: |
-          short_sha=${GITHUB_SHA::7}
+          short_sha=$(git rev-parse --short=7 HEAD)
           echo "short_sha=$short_sha" >> $GITHUB_OUTPUT
       # - name: Set up QEMU
       #   uses: docker/setup-qemu-action@v3

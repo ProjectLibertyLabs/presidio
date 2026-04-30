@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - _prod
+  workflow_dispatch:
 permissions:
   contents: read
   packages: read
@@ -14,28 +15,11 @@ env:
   DOCKER_PLATFORMS: linux/amd64
 
 jobs:
-  changes:
-    name: Changes
-    runs-on: ubuntu-24.04
-    outputs:
-      docker-images: ${{steps.filter.outputs.docker-images}}
-    steps:
-      - name: Check Out Repo
-        uses: actions/checkout@v5
-      - name: Check for Changed Files
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            docker-images:
-              - '.github/workflows/build-publish-image-ics-prod-ecr.yaml'
-              - 'presidio-analyzer/**'
-              - '*'
-
   build-publish-docker-images:
-    needs: changes
     name: Build and Publish to ICS Production ECR
-    if: needs.changes.outputs.docker-images == 'true'
+    # Push triggers are restricted to _prod. Manual dispatch (workflow_dispatch) is always
+    # allowed but the checkout below is pinned to _prod so it always builds from prod code.
+    if: github.ref == 'refs/heads/_prod' || github.event_name == 'workflow_dispatch'
     env:
       DOCKER_REGISTRY: ${{secrets.ICS_PROD_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
       AWS_OIDC_ROLE: ${{secrets.ICS_PROD_AWS_GITHUB_OIDC_ROLE_ARN}}
@@ -52,10 +36,12 @@ jobs:
     steps:
       - name: Check Out Repo
         uses: actions/checkout@v5
+        with:
+          ref: _prod
       - name: Derive Short SHA
         id: short-sha
         run: |
-          short_sha=${GITHUB_SHA::7}
+          short_sha=$(git rev-parse --short=7 HEAD)
           echo "short_sha=$short_sha" >> $GITHUB_OUTPUT
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
