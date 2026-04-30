@@ -39,7 +39,7 @@ jobs:
   build-publish-docker-images:
     needs: changes
     name: Build and Publish to ICS Staging ECR
-    if: needs.changes.outputs.docker-images == 'true'
+    if: needs.changes.outputs.docker-images == 'true' || github.event_name == 'workflow_dispatch'
     env:
       DOCKER_REGISTRY: ${{secrets.ICS_STG_AWS_ACCOUNT}}.dkr.ecr.us-east-2.amazonaws.com
       AWS_OIDC_ROLE: ${{secrets.ICS_STG_AWS_GITHUB_OIDC_ROLE_ARN}}
@@ -54,12 +54,16 @@ jobs:
         service: ["presidio-analyzer"]
 
     steps:
+      # On workflow_dispatch, always build from forked_main so the staging image
+      # reflects the default branch regardless of which ref was dispatched.
       - name: Check Out Repo
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && 'forked_main' || github.ref }}
       - name: Derive Short SHA
         id: short-sha
         run: |
-          short_sha=${GITHUB_SHA::7}
+          short_sha=$(git rev-parse --short=7 HEAD)
           echo "short_sha=$short_sha" >> $GITHUB_OUTPUT
       # - name: Set up QEMU
       #   uses: docker/setup-qemu-action@v3
