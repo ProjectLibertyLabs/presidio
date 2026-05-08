@@ -1,0 +1,170 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: write
+
+env:
+  AWS_REGION: us-east-2
+
+jobs:
+  release:
+    name: Promote staging image and create GitHub Release
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Parse and validate tag
+        id: tag
+        run: |
+          ref="${GITHUB_REF#refs/tags/}"
+          semver="${ref#v}"
+          if [[ ! "$semver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '$ref' is not strict semver vX.Y.Z"
+            exit 1
+          fi
+          echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          echo "git_tag=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tagged commit is on forked_main
+        run: |
+          git fetch origin forked_main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/forked_main; then
+            echo "::error::tagged commit $GITHUB_SHA is not an ancestor of origin/forked_main"
+            exit 1
+          fi
+
+      - name: Derive short SHA
+        id: sha
+        run: echo "short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Assume prod ECR role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ICS_PROD_AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Version guard against prod ECR
+        env:
+          SEMVER: ${{ steps.tag.outputs.semver }}
+        run: |
+          tags=$(aws ecr list-images \
+                   --repository-name ics-prod/pii-analyzer \
+                   --query 'imageIds[].imageTag' \
+                   --output text \
+                 | tr '\t' '\n' \
+                 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' || true)
+          if echo "$tags" | grep -qx "$SEMVER"; then
+            echo "::error::tag $SEMVER already exists in prod ECR"
+            exit 1
+          fi
+          max=$(echo "$tags" | sort -V | tail -n1)
+          if [[ -n "$max" ]]; then
+            highest=$(printf '%s\n%s\n' "$SEMVER" "$max" | sort -V | tail -n1)
+            if [[ "$highest" != "$SEMVER" ]] || [[ "$SEMVER" == "$max" ]]; then
+              echo "::error::tag $SEMVER must be greater than current prod max $max"
+              exit 1
+            fi
+          fi
+          echo "current_prod=${max:-none}"
+
+      - name: Login to prod ECR
+        env:
+          PROD_ACCOUNT: ${{ secrets.ICS_PROD_AWS_ACCOUNT }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | crane auth login --username AWS --password-stdin \
+              "${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Assume staging ECR role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.ICS_STG_AWS_GITHUB_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Locate staging image by commit SHA
+        id: stg
+        env:
+          SHORT_SHA: ${{ steps.sha.outputs.short }}
+        run: |
+          matching=$(aws ecr list-images \
+                       --repository-name ics-stg/pii-analyzer \
+                       --query 'imageIds[].imageTag' \
+                       --output text \
+                     | tr '\t' '\n' \
+                     | grep -E "^forked_main-${SHORT_SHA}-[0-9]+$" || true)
+          if [[ -z "$matching" ]]; then
+            echo "::error::no staging image found for commit ${SHORT_SHA}; ensure the staging build succeeded"
+            exit 1
+          fi
+          best=$(echo "$matching" | sort -t- -k3,3 -n | tail -n1)
+          echo "tag=$best" >> "$GITHUB_OUTPUT"
+
+      - name: Login to staging ECR
+        env:
+          STG_ACCOUNT: ${{ secrets.ICS_STG_AWS_ACCOUNT }}
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | crane auth login --username AWS --password-stdin \
+              "${STG_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Copy staging image to prod ECR as bare semver
+        env:
+          STG_ACCOUNT: ${{ secrets.ICS_STG_AWS_ACCOUNT }}
+          PROD_ACCOUNT: ${{ secrets.ICS_PROD_AWS_ACCOUNT }}
+          SEMVER: ${{ steps.tag.outputs.semver }}
+          STG_TAG: ${{ steps.stg.outputs.tag }}
+        run: |
+          src="${STG_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ics-stg/pii-analyzer:${STG_TAG}"
+          dst="${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ics-prod/pii-analyzer:${SEMVER}"
+          echo "Copying $src -> $dst"
+          crane copy "$src" "$dst"
+
+      - name: Verify digest parity
+        env:
+          STG_ACCOUNT: ${{ secrets.ICS_STG_AWS_ACCOUNT }}
+          PROD_ACCOUNT: ${{ secrets.ICS_PROD_AWS_ACCOUNT }}
+          SEMVER: ${{ steps.tag.outputs.semver }}
+          STG_TAG: ${{ steps.stg.outputs.tag }}
+        run: |
+          src_digest=$(crane digest "${STG_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ics-stg/pii-analyzer:${STG_TAG}")
+          dst_digest=$(crane digest "${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ics-prod/pii-analyzer:${SEMVER}")
+          if [[ "$src_digest" != "$dst_digest" ]]; then
+            echo "::error::digest mismatch after copy: src=$src_digest dst=$dst_digest"
+            exit 1
+          fi
+          echo "digest=$src_digest"
+
+      - name: Tag prod image as :latest
+        env:
+          PROD_ACCOUNT: ${{ secrets.ICS_PROD_AWS_ACCOUNT }}
+          SEMVER: ${{ steps.tag.outputs.semver }}
+        run: |
+          dst="${PROD_ACCOUNT}.dkr.ecr.${AWS_REGION}.amazonaws.com/ics-prod/pii-analyzer:${SEMVER}"
+          echo "Tagging $dst as :latest"
+          crane tag "$dst" latest
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_TAG: ${{ steps.tag.outputs.git_tag }}
+        run: |
+          gh release create "$GIT_TAG" \
+            --generate-notes \
+            --verify-tag \
+            --title "$GIT_TAG"
