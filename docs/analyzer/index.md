@@ -176,6 +176,14 @@ for more information.
 Presidio can be used to detect PII entities in multiple languages.
 Refer to the [multi-language support](languages.md) for more information.
 
+## Filtering recognizers by country
+
+Predefined recognizers in Presidio are tagged with a `country_code` so
+deployments can scope detection to a specific set of countries (e.g.
+US-only, EU-only) without manually enumerating recognizer classes. See
+the [Filtering recognizers by country](filtering_by_country.md) guide
+for usage and the rules for tagging custom recognizers.
+
 ## Outputting the analyzer decision process
 
 Presidio analyzer has a built in mechanism for tracing each decision made. This can be useful when attempting to understand a specific PII detection. For more info, see the [decision process](decision_process.md) documentation.
@@ -187,8 +195,4 @@ For a list of the current supported entities:
 
 ## API reference
 
-Follow the [API Spec](https://microsoft.github.io/presidio/api-docs/api-docs.html#tag/Analyzer) for the Analyzer REST API reference details and [Analyzer Python API](../api/analyzer_python.md) for Python API reference
-
-## Samples
-
-Samples illustrating the usage of the Presidio Analyzer can be found in the [Python samples](../samples/index.md).
+Follow the [API Spec](https://data-privacy-stack.github.io/presidio/api-docs/api-docs.html#tag/Analyzer) for the Analyzer REST API reference details and [Analyzer Python API](../api/analyzer_python.md) for Python API reference

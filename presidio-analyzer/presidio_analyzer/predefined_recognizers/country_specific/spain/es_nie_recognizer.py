@@ -21,6 +21,8 @@ class EsNieRecognizer(PatternRecognizer):
     or spaces.
     """
 
+    COUNTRY_CODE = "es"
+
     PATTERNS = [
         Pattern(
             "NIE",
@@ -58,13 +60,13 @@ class EsNieRecognizer(PatternRecognizer):
 
         pattern_text = EntityRecognizer.sanitize_value(
             pattern_text, self.replacement_pairs
-        )
+        ).upper()
 
         letters = "TRWAGMYFPDXBNJZSQVHLCKE"
         letter = pattern_text[-1]
 
         # check last is a letter, and first is in X,Y,Z
-        if not pattern_text[1:-1].isdigit or pattern_text[:1] not in "XYZ":
+        if not pattern_text[1:-1].isdigit() or pattern_text[:1] not in "XYZ":
             return False
         # check size is 8 or 9
         if len(pattern_text) < 8 or len(pattern_text) > 9:

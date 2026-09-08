@@ -1,3 +1,6 @@
+import re
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from tests import assert_result
@@ -329,6 +332,28 @@ def update_iban_checksum(iban):
         ("VG96 VPVG 0000 0123 4567 8901", 1, ((0, 29),),),
         ("VG96 VPVG A000 0123 4567 8901", 0, ()),
         ("VG96 VPVG 0000 0123 4567 8902", 0, ()),
+        # IBAN-registry members previously missing from regex_per_country.
+        # Each: valid (unspaced + spaced), one format-invalid, one bad-checksum.
+        ("EG380019000500000000263180002", 1, ((0, 29),),),
+        ("EG38 0019 0005 0000 0000 2631 8000 2", 1, ((0, 36),),),
+        ("EG38A019000500000000263180002", 0, ()),
+        ("EG380019000500000000263180003", 0, ()),
+        ("UA213223130000026007233566001", 1, ((0, 29),),),
+        ("UA21 3223 1300 0002 6007 2335 6600 1", 1, ((0, 36),),),
+        ("UA21A223130000026007233566001", 0, ()),
+        ("UA213223130000026007233566002", 0, ()),
+        ("IQ98NBIQ850123456789012", 1, ((0, 23),),),
+        ("IQ98 NBIQ 8501 2345 6789 012", 1, ((0, 28),),),
+        ("IQ98NBIQ850123456789013", 0, ()),
+        ("LC55HEMM000100010012001200023015", 1, ((0, 32),),),
+        ("LC55 HEMM 0001 0001 0012 0012 0002 3015", 1, ((0, 39),),),
+        ("LC55HEMM000100010012001200023016", 0, ()),
+        ("SC18SSCB11010000000000001497USD", 1, ((0, 31),),),
+        ("SC18 SSCB 1101 0000 0000 0000 1497 USD", 1, ((0, 38),),),
+        ("SC18SSCB11010000000000001497USE", 0, ()),
+        ("LY83002048000020100120361", 1, ((0, 25),),),
+        ("LY83 0020 4800 0020 1001 2036 1", 1, ((0, 31),),),
+        ("LY83002048000020100120362", 0, ()),
         (
             "this is an iban VG96 VPVG 0000 0123 4567 8901 in a sentence",
             1,
@@ -370,3 +395,40 @@ def test_when_all_ibans_then_succeed(
     for res, (start, end) in zip(results, expected_res):
 
         assert_result(res, entities[0], start, end, max_score)
+
+
+def test_when_finditer_times_out_then_returns_empty_results(recognizer, entities):
+    """Test that a TimeoutError from re.finditer is caught and returns no results."""
+    with patch(
+        "presidio_analyzer.predefined_recognizers.generic.iban_recognizer.re.finditer",
+        side_effect=TimeoutError("regex timed out"),
+    ):
+        results = recognizer.analyze("AL47212110090000000235698741", entities)
+
+    assert results == []
+
+
+def test_when_format_validation_times_out_then_returns_no_results(recognizer, entities):
+    """Test that a TimeoutError from re.match in __is_valid_format is caught."""
+    with patch(
+        "presidio_analyzer.predefined_recognizers.generic.iban_recognizer.re.match",
+        side_effect=TimeoutError("regex timed out"),
+    ):
+        results = recognizer.analyze("AL47212110090000000235698741", entities)
+
+    assert results == []
+
+
+def test_when_iban_match_group_is_empty_string_then_skips(recognizer, entities):
+    """Test that an empty match group is skipped without producing a result."""
+    mock_match = MagicMock()
+    mock_match.groups.return_value = ("",)
+    mock_match.span.return_value = (0, 0)
+
+    with patch(
+        "presidio_analyzer.predefined_recognizers.generic.iban_recognizer.re.finditer",
+        return_value=iter([mock_match]),
+    ):
+        results = recognizer.analyze("AL47212110090000000235698741", entities)
+
+    assert results == []

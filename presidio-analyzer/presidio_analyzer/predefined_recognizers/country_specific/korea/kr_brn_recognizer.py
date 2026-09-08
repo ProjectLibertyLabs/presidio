@@ -25,6 +25,8 @@ class KrBrnRecognizer(PatternRecognizer):
     to be used during pattern matching (e.g., removing dashes).
     """
 
+    COUNTRY_CODE = "kr"
+
     PATTERNS = [
         Pattern(
             "BRN (Weak)",
@@ -56,6 +58,7 @@ class KrBrnRecognizer(PatternRecognizer):
         supported_language: str = "ko",
         supported_entity: str = "KR_BRN",
         replacement_pairs: Optional[List[Tuple[str, str]]] = None,
+        name: Optional[str] = None,
     ):
         self.replacement_pairs = replacement_pairs if replacement_pairs else [("-", "")]
 
@@ -66,6 +69,7 @@ class KrBrnRecognizer(PatternRecognizer):
             patterns=patterns,
             context=context,
             supported_language=supported_language,
+            name=name,
         )
 
     def validate_result(self, pattern_text: str) -> Union[bool, None]:

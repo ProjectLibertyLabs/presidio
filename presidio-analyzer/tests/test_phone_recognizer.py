@@ -28,6 +28,9 @@ def recognizer():
         ("BR: +55 11 98456 5666", 1, ["PHONE_NUMBER"], ((4, 21), ), 0.4),
         ("My Japanese number is 090-1234-5678", 1, ["PHONE_NUMBER"],((22, 35), ), 0.4),
         ("My CN number is 13812345678", 1, ["PHONE_NUMBER"],((16, 27), ), 0.4),
+        # GB national-format number: only matched when region is the valid ISO code
+        # "GB" (not "UK"). Regression test for the DEFAULT_SUPPORTED_REGIONS fix.
+        ("My UK number is 020 7946 0958", 1, ["PHONE_NUMBER"], ((16, 29), ), 0.4),
         # fmt: on
     ],
 )
@@ -116,6 +119,10 @@ def test_when_phone_with_leniency_then_succeed(
          2, ["PHONE_NUMBER", "PHONE_NUMBER"],
          ((16, 30), (60, 76),), 0.4, 
          ['Recognized as US region phone number, using PhoneRecognizer','Recognized as GR region phone number, using PhoneRecognizer']),
+         ("My US number is (415) 555-0132, and my international one is +33 1 42 68 53 00",
+         2, ["PHONE_NUMBER", "PHONE_NUMBER"],
+         ((16, 30), (60, 77),), 0.4,
+         ['Recognized as US region phone number, using PhoneRecognizer','Recognized as FR region phone number, using PhoneRecognizer']),
         # fmt: on
     ],
 )
@@ -140,3 +147,13 @@ def test_get_analysis_explanation():
     test_region = "US"
     explanation = phone_recognizer._get_analysis_explanation(test_region)
     assert explanation.recognizer == "PhoneRecognizer"
+
+def test_get_supported_entities():
+    default_phone_recognizer = PhoneRecognizer()
+    default_supported_entities = default_phone_recognizer.get_supported_entities()
+    assert default_supported_entities == ["PHONE_NUMBER"]
+
+    entity_name = "TELEPHONE_OR_FAX"
+    configured_phone_recognizer = PhoneRecognizer(supported_entity=entity_name)
+    configured_supported_entities = configured_phone_recognizer.get_supported_entities()
+    assert configured_supported_entities == [entity_name]

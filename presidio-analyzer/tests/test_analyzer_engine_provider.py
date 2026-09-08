@@ -1,11 +1,17 @@
+# ruff: noqa: D103,D205,E501,F541,F841,W293
+
+import importlib.util
+import os
 import re
 from pathlib import Path
 from typing import List
+from unittest.mock import patch
 
-from presidio_analyzer import AnalyzerEngineProvider, RecognizerResult, PatternRecognizer
-from presidio_analyzer.nlp_engine import SpacyNlpEngine, NlpArtifacts
-
-
+import pytest
+import yaml
+from install_nlp_models import _install_models_from_nlp_config, install_models
+from presidio_analyzer import AnalyzerEngineProvider, RecognizerResult
+from presidio_analyzer.nlp_engine import NlpArtifacts, SpacyNlpEngine
 from presidio_analyzer.predefined_recognizers import (
     AzureAILanguageRecognizer,
     CreditCardRecognizer,
@@ -13,7 +19,26 @@ from presidio_analyzer.predefined_recognizers import (
     StanzaRecognizer,
 )
 
-import pytest
+def _has_module(name: str) -> bool:
+    # find_spec imports the parent packages of a dotted name, so a missing
+    # intermediate raises ModuleNotFoundError instead of returning None --
+    # "azure.health.deidentification" does exactly that without the ahds extra.
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# Gate the optional-dependency tests below on the module each one actually
+# imports. `pytest.importorskip` cannot be used for this: evaluated inside a
+# decorator it runs at module import, so a missing extra takes the whole file
+# out of collection instead of skipping the two tests that need it.
+#
+# The bare `azure` name is also too coarse. `azure.*` are namespace packages and
+# the `ahds` extra populates them too, so `import azure` can succeed while
+# `azure.ai.textanalytics` is absent.
+_HAS_TEXT_ANALYTICS = _has_module("azure.ai.textanalytics")
+_HAS_HEALTH_DEID = _has_module("azure.health.deidentification")
 
 
 def get_full_paths(analyzer_yaml, nlp_engine_yaml=None, recognizer_registry_yaml=None):
@@ -35,6 +60,10 @@ def test_analyzer_engine_provider_default_configuration(mandatory_recognizers):
         engine.registry.global_regex_flags == re.DOTALL | re.MULTILINE | re.IGNORECASE
     )
     assert engine.default_score_threshold == 0
+    assert all(
+        recognizer.score_thresholds == {}
+        for recognizer in engine.registry.recognizers
+    )
     names = [recognizer.name for recognizer in engine.registry.recognizers]
     for predefined_recognizer in mandatory_recognizers:
         assert predefined_recognizer in names
@@ -89,8 +118,96 @@ def test_analyzer_engine_provider_configuration_file():
         and recognizer.supported_language == "es"
     ][0]
     assert spanish_recognizer.context == ["tarjeta", "credito"]
+    credit_card = next(
+        recognizer
+        for recognizer in recognizer_registry.recognizers
+        if recognizer.name == "CreditCardRecognizer"
+    )
+    assert credit_card.score_thresholds == {
+        "default": 0.4,
+        "CREDIT_CARD": 0.7,
+    }
     assert isinstance(engine.nlp_engine, SpacyNlpEngine)
     assert engine.nlp_engine.engine_name == "spacy"
+
+
+def test_analyzer_engine_provider_inline_recognizer_thresholds_affect_output(tmp_path):
+    analyzer_yaml, _, _ = get_full_paths("conf/test_analyzer_engine.yaml")
+
+    with open(analyzer_yaml) as file:
+        configuration = yaml.safe_load(file)
+
+    configuration["default_score_threshold"] = 0.9
+    credit_card = configuration["recognizer_registry"]["recognizers"][0]
+    credit_card["score_thresholds"] = {"default": 0.4}
+
+    threshold_yaml = tmp_path / "analyzer_with_thresholds.yaml"
+    threshold_yaml.write_text(yaml.safe_dump(configuration, sort_keys=False))
+
+    provider = AnalyzerEngineProvider(threshold_yaml)
+    engine = provider.create_engine()
+
+    loaded_credit_card = next(
+        recognizer
+        for recognizer in engine.registry.recognizers
+        if recognizer.name == "CreditCardRecognizer"
+    )
+    assert loaded_credit_card.score_thresholds == {"default": 0.4}
+
+    results = engine.analyze(
+        text=" Credit card: 4095-2609-9393-4932",
+        language="en",
+        entities=["CREDIT_CARD"],
+    )
+
+    assert len(results) == 1
+
+
+def test_analyzer_engine_provider_external_registry_thresholds_affect_output(tmp_path):
+    analyzer_yaml = tmp_path / "analyzer.yaml"
+    analyzer_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "supported_languages": ["en"],
+                "default_score_threshold": 0.9,
+                "nlp_configuration": {
+                    "nlp_engine_name": "spacy",
+                    "models": [
+                        {"lang_code": "en", "model_name": "en_core_web_lg"}
+                    ],
+                },
+            }
+        )
+    )
+    registry_yaml = tmp_path / "registry.yaml"
+    registry_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "supported_languages": ["en"],
+                "recognizers": [
+                    {
+                        "name": "RocketRecognizer",
+                        "type": "custom",
+                        "supported_entity": "ROCKET",
+                        "supported_language": "en",
+                        "patterns": [
+                            {"name": "rocket", "regex": "rocket", "score": 0.5}
+                        ],
+                        "score_thresholds": {"default": 0.4},
+                    }
+                ],
+            }
+        )
+    )
+    provider = AnalyzerEngineProvider(
+        analyzer_engine_conf_file=analyzer_yaml,
+        recognizer_registry_conf_file=registry_yaml,
+    )
+
+    engine = provider.create_engine()
+    results = engine.analyze("rocket", "en", entities=["ROCKET"])
+
+    assert [result.entity_type for result in results] == ["ROCKET"]
 
 
 def test_analyzer_engine_provider_defaults(mandatory_recognizers):
@@ -98,6 +215,10 @@ def test_analyzer_engine_provider_defaults(mandatory_recognizers):
     engine = provider.create_engine()
     assert engine.supported_languages == ["en"]
     assert engine.default_score_threshold == 0
+    assert all(
+        recognizer.score_thresholds == {}
+        for recognizer in engine.registry.recognizers
+    )
     recognizer_registry = engine.registry
     assert (
         recognizer_registry.global_regex_flags
@@ -143,9 +264,15 @@ def test_analyzer_engine_provider_with_files_per_provider():
 
 
 @pytest.mark.skipif(
-    pytest.importorskip("azure"), reason="Optional dependency not installed"
-)  # noqa: E501
-def test_analyzer_engine_provider_with_azure_ai_language():
+    not _HAS_TEXT_ANALYTICS, reason="azure-ai-language extra not installed"
+)
+def test_analyzer_engine_provider_with_azure_ai_language(monkeypatch):
+    # The constructor builds a client when none is injected, falling back to
+    # these variables. Nothing here reaches the network: the SDK client is
+    # constructed locally and `analyze` is overridden below.
+    monkeypatch.setenv("AZURE_AI_KEY", "test-key")
+    monkeypatch.setenv("AZURE_AI_ENDPOINT", "https://example.invalid/")
+
     analyzer_yaml, _, _ = get_full_paths(
         "conf/test_azure_ai_language_reco.yaml",
     )
@@ -163,17 +290,27 @@ def test_analyzer_engine_provider_with_azure_ai_language():
 
     analyzer_engine = provider.create_engine()
 
-    azure_ai_recognizers = [
-        rec
+    names = {
+        rec.name
         for rec in analyzer_engine.registry.recognizers
-        if rec.name == "Azure AI Language PII"
-    ]
+        if isinstance(rec, MockAzureAiLanguageRecognizer)
+    }
 
-    assert len(azure_ai_recognizers) == 1
+    # The plain entry takes its name from the YAML key; the `class_name` entry
+    # takes the name configured next to it. Both require the constructor to
+    # accept `name`, which is what regressed after #1800.
+    assert names == {"MockAzureAiLanguageRecognizer", "Azure AI Language PII"}
 
     assert len(analyzer_engine.analyze("This is a test", language="en")) > 0
 
-@pytest.mark.skipif(pytest.importorskip("azure"), reason="Optional dependency not installed") # noqa: E501
+
+# AzureHealthDeidRecognizer.__init__ builds a client when none is passed, and
+# that path reads AHDS_ENDPOINT and raises ValueError without it. The YAML entry
+# supplies no client, so the endpoint is as much a precondition as the package.
+@pytest.mark.skipif(
+    not _HAS_HEALTH_DEID or not os.getenv("AHDS_ENDPOINT"),
+    reason="ahds extra not installed or AHDS_ENDPOINT not set",
+)
 def test_analyzer_engine_provider_with_ahds():
     analyzer_yaml, _, _ = get_full_paths(
         "conf/test_ahds_reco.yaml",
@@ -363,8 +500,8 @@ def test_analyzer_engine_provider_get_configuration_with_nonexistent_file():
 
 def test_analyzer_engine_provider_get_configuration_with_invalid_yaml():
     """Test get_configuration handles invalid YAML gracefully."""
-    import tempfile
     import os
+    import tempfile
 
     # Create a temporary file with invalid YAML
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
@@ -514,6 +651,50 @@ def test_analyzer_engine_provider_create_engine_with_all_params():
     assert len(engine.supported_languages) > 0
 
 
+def test_analyzer_engine_provider_inline_sections_take_priority_over_per_section_files():
+    """Test that nlp_configuration / recognizer_registry sections embedded in the
+    analyzer conf file take priority over separately provided per-section files.
+
+    This is the key behaviour that lets a single unified ANALYZER_CONF_FILE drive
+    both NLP and registry configuration without being silently overridden by
+    Dockerfile-baked-in default values for NLP_CONF_FILE and
+    RECOGNIZER_REGISTRY_CONF_FILE.
+    """
+    # test_analyzer_engine.yaml contains both nlp_configuration and
+    # recognizer_registry sections.
+    analyzer_yaml, nlp_yaml, registry_yaml = get_full_paths(
+        "conf/test_analyzer_engine.yaml",
+        "conf/default.yaml",
+        "conf/test_recognizer_registry.yaml",
+    )
+
+    provider = AnalyzerEngineProvider(
+        analyzer_engine_conf_file=analyzer_yaml,
+        nlp_engine_conf_file=nlp_yaml,
+        recognizer_registry_conf_file=registry_yaml,
+    )
+    engine = provider.create_engine()
+
+    # The analyzer yaml's supported_languages + recognizer_registry should prevail.
+    # test_analyzer_engine.yaml lists de, en, es — not the registry-only en.
+    assert "de" in engine.supported_languages
+    assert "en" in engine.supported_languages
+    assert "es" in engine.supported_languages
+
+    # The registry from the inline section has more than the 6 recognizers
+    # in test_recognizer_registry.yaml, confirming the inline section won.
+    assert len(engine.registry.recognizers) > 6
+    credit_card = next(
+        recognizer
+        for recognizer in engine.registry.recognizers
+        if recognizer.name == "CreditCardRecognizer"
+    )
+    assert credit_card.score_thresholds == {
+        "default": 0.4,
+        "CREDIT_CARD": 0.7,
+    }
+
+
 def test_analyzer_engine_provider_multiple_languages_support():
     """Test analyzer engine with multiple language support."""
     analyzer_yaml, _, _ = get_full_paths("conf/test_analyzer_engine.yaml")
@@ -561,3 +742,95 @@ def test_analyzer_engine_provider_configuration_logging(caplog):
     assert len(caplog.records) > 0
 
 
+
+
+# --- install_models / _install_models_from_nlp_config tests ---
+
+_NLP_CONF_CONTENT = (
+    "nlp_engine_name: spacy\n"
+    "models:\n"
+    "  - lang_code: en\n"
+    "    model_name: en_core_web_sm\n"
+)
+
+_ANALYZER_CONF_WITH_NLP = (
+    "nlp_configuration:\n"
+    "  nlp_engine_name: spacy\n"
+    "  models:\n"
+    "    - lang_code: en\n"
+    "      model_name: en_core_web_lg\n"
+)
+
+_ANALYZER_CONF_WITHOUT_NLP = "supported_languages:\n  - en\n"
+
+
+def test_install_models_only_analyzer_conf_with_nlp_configuration(tmp_path):
+    """analyzer_conf_file with nlp_configuration — uses analyzer's NLP config."""
+    analyzer_yaml = tmp_path / "analyzer.yaml"
+    analyzer_yaml.write_text(_ANALYZER_CONF_WITH_NLP)
+
+    with patch("install_nlp_models._download_model") as mock_dl:
+        install_models(analyzer_conf_file=str(analyzer_yaml))
+
+    mock_dl.assert_called_once_with("spacy", "en_core_web_lg")
+
+
+def test_install_models_analyzer_conf_without_nlp_falls_back_to_nlp_conf(tmp_path):
+    """analyzer_conf_file without nlp_configuration — falls back to nlp_conf_file."""
+    analyzer_yaml = tmp_path / "analyzer.yaml"
+    analyzer_yaml.write_text(_ANALYZER_CONF_WITHOUT_NLP)
+    nlp_yaml = tmp_path / "nlp.yaml"
+    nlp_yaml.write_text(_NLP_CONF_CONTENT)
+
+    with patch("install_nlp_models._download_model") as mock_dl:
+        install_models(nlp_conf_file=str(nlp_yaml), analyzer_conf_file=str(analyzer_yaml))
+
+    mock_dl.assert_called_once_with("spacy", "en_core_web_sm")
+
+
+def test_install_models_only_nlp_conf_file(tmp_path):
+    """Only nlp_conf_file provided — reads and installs from it directly."""
+    nlp_yaml = tmp_path / "nlp.yaml"
+    nlp_yaml.write_text(_NLP_CONF_CONTENT)
+
+    with patch("install_nlp_models._download_model") as mock_dl:
+        install_models(nlp_conf_file=str(nlp_yaml))
+
+    mock_dl.assert_called_once_with("spacy", "en_core_web_sm")
+
+
+def test_install_models_analyzer_conf_takes_priority_over_nlp_conf(tmp_path):
+    """Both files provided and analyzer_conf_file has nlp_configuration — analyzer wins."""
+    analyzer_yaml = tmp_path / "analyzer.yaml"
+    analyzer_yaml.write_text(_ANALYZER_CONF_WITH_NLP)
+    nlp_yaml = tmp_path / "nlp.yaml"
+    nlp_yaml.write_text(_NLP_CONF_CONTENT)
+
+    with patch("install_nlp_models._download_model") as mock_dl:
+        install_models(nlp_conf_file=str(nlp_yaml), analyzer_conf_file=str(analyzer_yaml))
+
+    mock_dl.assert_called_once_with("spacy", "en_core_web_lg")
+
+
+def test_install_models_nonexistent_analyzer_conf_raises_os_error(tmp_path):
+    """Nonexistent analyzer_conf_file raises OSError."""
+    with pytest.raises(OSError):
+        install_models(analyzer_conf_file=str(tmp_path / "missing.yaml"))
+
+
+def test_install_models_nonexistent_nlp_conf_raises_os_error(tmp_path):
+    """Nonexistent nlp_conf_file raises OSError."""
+    with pytest.raises(OSError):
+        install_models(nlp_conf_file=str(tmp_path / "missing.yaml"))
+
+
+def test_install_models_from_nlp_config_missing_engine_name_raises_value_error():
+    """nlp_configuration without nlp_engine_name raises ValueError."""
+    with pytest.raises(ValueError, match="nlp_engine_name"):
+        _install_models_from_nlp_config({"models": [{"model_name": "en_core_web_sm"}]})
+
+
+def test_install_models_from_nlp_config_missing_models_raises_value_error():
+    """nlp_configuration without models raises ValueError."""
+    with pytest.raises(ValueError, match="models"):
+        _install_models_from_nlp_config({"nlp_engine_name": "spacy"})

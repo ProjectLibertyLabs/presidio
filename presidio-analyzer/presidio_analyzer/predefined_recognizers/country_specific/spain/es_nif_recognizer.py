@@ -16,6 +16,8 @@ class EsNifRecognizer(PatternRecognizer):
     This can allow a greater variety in input, for example by removing dashes or spaces.
     """
 
+    COUNTRY_CODE = "es"
+
     PATTERNS = [
         Pattern(
             "NIF",
@@ -51,7 +53,7 @@ class EsNifRecognizer(PatternRecognizer):
     def validate_result(self, pattern_text: str) -> bool:  # noqa: D102
         pattern_text = EntityRecognizer.sanitize_value(
             pattern_text, self.replacement_pairs
-        )
+        ).upper()
         letter = pattern_text[-1]
         number = int("".join(filter(str.isdigit, pattern_text)))
         letters = "TRWAGMYFPDXBNJZSQVHLCKE"

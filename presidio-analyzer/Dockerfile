@@ -1,10 +1,11 @@
-FROM python:3.12-slim@sha256:9e01bf1ae5db7649a236da7be1e94ffbbbdd7a93f867dd0d8d5720d9e1f89fab
+FROM python:3.12-slim@sha256:804ddf3251a60bbf9c92e73b7566c40428d54d0e79d3428194edf40da6521286
 
 ARG NLP_CONF_FILE=presidio_analyzer/conf/default.yaml
 ARG ANALYZER_CONF_FILE=presidio_analyzer/conf/default_analyzer.yaml
 ARG RECOGNIZER_REGISTRY_CONF_FILE=presidio_analyzer/conf/default_recognizers.yaml
 ENV PIP_NO_CACHE_DIR=1
-ENV POETRY_VIRTUALENVS_CREATE=false
+# Install the locked dependencies into the system environment (no venv).
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
 
 ENV ANALYZER_CONF_FILE=${ANALYZER_CONF_FILE}
 ENV RECOGNIZER_REGISTRY_CONF_FILE=${RECOGNIZER_REGISTRY_CONF_FILE}
@@ -24,16 +25,21 @@ RUN apt-get update \
   && apt-get install curl --no-install-recommends -y \
   && rm -rf /var/lib/apt/lists/*
 
-COPY ./pyproject.toml /app/
+COPY ./pyproject.toml ./uv.lock /app/
 
-RUN pip install poetry==2.3.2 \
-    && poetry install --no-root --only=main -E server \
-    && rm -rf $(poetry config cache-dir)
+# Install exactly the locked dependency graph (main + server extra, no dev
+# group, project itself not installed — it is run from the copied source).
+# Splitting this from the source COPY keeps the dependency layer cached until
+# pyproject.toml/uv.lock change.
+RUN pip install uv==0.11.6 \
+    && uv sync --locked --no-cache --no-default-groups --extra server --no-install-project
     
-# install nlp models specified in NLP_CONF_FILE
+# install nlp models specified in NLP_CONF_FILE or via nlp_configuration in ANALYZER_CONF_FILE
 COPY ./install_nlp_models.py /app/
 
-RUN poetry run python install_nlp_models.py --conf_file ${NLP_CONF_FILE}
+RUN python install_nlp_models.py \
+    --conf_file ${NLP_CONF_FILE} \
+    --analyzer_conf_file ${ANALYZER_CONF_FILE}
 
 COPY . /app/
 

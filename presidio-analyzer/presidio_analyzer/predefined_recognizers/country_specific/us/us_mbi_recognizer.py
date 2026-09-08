@@ -31,6 +31,8 @@ class UsMbiRecognizer(PatternRecognizer):
     :param supported_entity: The entity this recognizer can detect
     """
 
+    COUNTRY_CODE = "us"
+
     # Valid letters: A-Z excluding S, L, O, I, B, Z
     # Valid letters are: A, C, D, E, F, G, H, J, K, M, N, P, Q, R, T, U, V, W, X, Y
     VALID_LETTERS = "ACDEFGHJKMNPQRTUVWXY"
@@ -88,6 +90,7 @@ class UsMbiRecognizer(PatternRecognizer):
         context: Optional[List[str]] = None,
         supported_language: str = "en",
         supported_entity: str = "US_MBI",
+        name: Optional[str] = None,
     ):
         patterns = patterns if patterns else self.PATTERNS
         context = context if context else self.CONTEXT
@@ -96,4 +99,5 @@ class UsMbiRecognizer(PatternRecognizer):
             patterns=patterns,
             context=context,
             supported_language=supported_language,
+            name=name,
         )

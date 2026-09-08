@@ -44,10 +44,12 @@ class ThTninRecognizer(PatternRecognizer):
     for different strings to be used during pattern matching.
     """
 
+    COUNTRY_CODE = "th"
+
     PATTERNS = [
         Pattern(
             "TNIN (Medium)",
-            r"\b[1-9](?:[134][0-9]|[25][0134567]|[67][01234567]|[89][0123456])\d{10}\b",
+            r"\b[1-9](?:[134][0-9]|2[0-7]|5[0-8]|[67][01234567]|[89][0123456])\d{10}\b",
             0.5,
         )
     ]
